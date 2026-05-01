@@ -50,6 +50,11 @@ export default function SermonList() {
   // Set of sermon IDs (from THIS user's preachings) that are flagged
   // as preached at our church. Used for the WFUMC badge + filter.
   const [wfumcSermonIds, setWfumcSermonIds] = useState(new Set());
+  // Max preaching date per sermon — used for "most recently preached"
+  // sorting and the displayed date on each row.
+  const [latestPreachedBySermon, setLatestPreachedBySermon] = useState(
+    new Map()
+  );
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
   const updateFilter = (key, value) =>
@@ -68,24 +73,34 @@ export default function SermonList() {
               .from('sermons')
               .select('*')
               .eq('owner_user_id', user.id)
-              .order('preached_at', { ascending: false, nullsFirst: false })
               .order('created_at', { ascending: false })
           ),
+          // Pull EVERY preaching the user owns (not just is_at_our_church)
+          // so we can compute most-recent + WFUMC-flag in one pass.
           withTimeout(
             supabase
               .from('preachings')
-              .select('sermon_id')
+              .select('sermon_id, preached_at, is_at_our_church')
               .eq('owner_user_id', user.id)
-              .eq('is_at_our_church', true)
           ),
         ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachRes.error) throw preachRes.error;
         if (!cancelled) {
           setSermons(sermonRes.data ?? []);
-          setWfumcSermonIds(
-            new Set((preachRes.data ?? []).map((p) => p.sermon_id))
-          );
+          const wfumc = new Set();
+          const latest = new Map();
+          for (const p of preachRes.data ?? []) {
+            if (p.is_at_our_church) wfumc.add(p.sermon_id);
+            if (p.preached_at) {
+              const cur = latest.get(p.sermon_id);
+              if (!cur || p.preached_at > cur) {
+                latest.set(p.sermon_id, p.preached_at);
+              }
+            }
+          }
+          setWfumcSermonIds(wfumc);
+          setLatestPreachedBySermon(latest);
         }
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
@@ -98,14 +113,24 @@ export default function SermonList() {
     };
   }, [user?.id]);
 
-  // Annotate each sermon with its parsed list of bible books once
+  // Annotate each sermon with its parsed list of bible books AND its
+  // effective last-preached date (max from preachings, falling back to
+  // the canonical sermons.preached_at when no preachings exist).
   const sermonsWithBooks = useMemo(
     () =>
-      sermons.map((s) => ({
-        ...s,
-        books: booksFromReference(s.scripture_reference),
-      })),
-    [sermons]
+      sermons.map((s) => {
+        const fromPreachings = latestPreachedBySermon.get(s.id) ?? null;
+        const effectiveDate =
+          fromPreachings && (!s.preached_at || fromPreachings > s.preached_at)
+            ? fromPreachings
+            : s.preached_at ?? fromPreachings ?? null;
+        return {
+          ...s,
+          books: booksFromReference(s.scripture_reference),
+          lastPreachedAt: effectiveDate,
+        };
+      }),
+    [sermons, latestPreachedBySermon]
   );
 
   // Build the dropdown of unique books found across the library
@@ -168,10 +193,15 @@ export default function SermonList() {
     switch (filters.sort) {
       case 'preached_asc':
         arr.sort((a, b) => {
-          if (!a.preached_at && !b.preached_at) return 0;
-          if (!a.preached_at) return 1;
-          if (!b.preached_at) return -1;
-          return cmp(a.preached_at, b.preached_at, 1);
+          // For "oldest preached first" use the FIRST preaching, which we
+          // approximate via sermons.preached_at (set by the user/import).
+          // Falls back to lastPreachedAt if first wasn't set explicitly.
+          const ad = a.preached_at || a.lastPreachedAt;
+          const bd = b.preached_at || b.lastPreachedAt;
+          if (!ad && !bd) return 0;
+          if (!ad) return 1;
+          if (!bd) return -1;
+          return cmp(ad, bd, 1);
         });
         break;
       case 'title_asc':
@@ -195,11 +225,13 @@ export default function SermonList() {
         break;
       case 'preached_desc':
       default:
+        // Most recently preached: use the MAX preaching date
+        // (lastPreachedAt is computed from the preachings table).
         arr.sort((a, b) => {
-          if (!a.preached_at && !b.preached_at) return 0;
-          if (!a.preached_at) return 1;
-          if (!b.preached_at) return -1;
-          return cmp(a.preached_at, b.preached_at, -1);
+          if (!a.lastPreachedAt && !b.lastPreachedAt) return 0;
+          if (!a.lastPreachedAt) return 1;
+          if (!b.lastPreachedAt) return -1;
+          return cmp(a.lastPreachedAt, b.lastPreachedAt, -1);
         });
         break;
     }
@@ -394,9 +426,9 @@ export default function SermonList() {
                           {s.lectionary_year}
                         </span>
                       )}
-                      {s.preached_at && (
+                      {s.lastPreachedAt && (
                         <span className="text-gray-500">
-                          {fmtDate(s.preached_at)}
+                          Last: {fmtDate(s.lastPreachedAt)}
                         </span>
                       )}
                       {s.strength != null && (
