@@ -22,6 +22,8 @@ export default function SermonDetail() {
   const [sermon, setSermon] = useState(null);
   // Bulletins this sermon has been preached at (via liturgy_items.sermon_id)
   const [preachedAt, setPreachedAt] = useState([]);
+  // Snapshots of prior versions of this sermon (sermon_revisions table)
+  const [revisions, setRevisions] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState({
@@ -44,7 +46,7 @@ export default function SermonDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, preachingsRes] = await Promise.all([
+        const [sermonRes, preachingsRes, revisionsRes] = await Promise.all([
           withTimeout(
             supabase
               .from('sermons')
@@ -63,12 +65,22 @@ export default function SermonDetail() {
               .eq('owner_user_id', user.id)
               .order('preached_at', { ascending: false, nullsFirst: false })
           ),
+          withTimeout(
+            supabase
+              .from('sermon_revisions')
+              .select('*')
+              .eq('sermon_id', id)
+              .eq('owner_user_id', user.id)
+              .order('taken_at', { ascending: false })
+          ),
         ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachingsRes.error) throw preachingsRes.error;
+        if (revisionsRes.error) throw revisionsRes.error;
         if (cancelled) return;
         setSermon(sermonRes.data);
         setPreachedAt(preachingsRes.data ?? []);
+        setRevisions(revisionsRes.data ?? []);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -452,8 +464,287 @@ export default function SermonDetail() {
         </div>
       )}
 
+      {/* Past versions (revision snapshots) */}
+      <RevisionsCard
+        sermon={sermon}
+        revisions={revisions}
+        setRevisions={setRevisions}
+        userId={user?.id}
+      />
+
       {/* Manuscript */}
       <ManuscriptCard sermon={sermon} setSermon={setSermon} />
+    </div>
+  );
+}
+
+// "Past versions" panel — lets the pastor snapshot the current state of
+// a sermon (title + manuscript + scripture/theme/notes) with an optional
+// label, and view/delete prior snapshots. Stored in sermon_revisions.
+//
+// Use case: he frequently rewrites sermons when preaching them at a new
+// location, and occasionally wants to keep a copy of the prior version
+// in case a story or section is worth reviving later.
+function RevisionsCard({ sermon, revisions, setRevisions, userId }) {
+  const [open, setOpen] = useState(false);
+  const [snapshotting, setSnapshotting] = useState(false);
+  const [label, setLabel] = useState('');
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(() => new Set());
+  const [deletingId, setDeletingId] = useState(null);
+
+  const toggleExpanded = (id) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const takeSnapshot = async () => {
+    if (!userId || !sermon) return;
+    setSnapshotting(true);
+    setError(null);
+    try {
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermon_revisions')
+          .insert({
+            sermon_id: sermon.id,
+            owner_user_id: userId,
+            snapshot_title: sermon.title ?? null,
+            snapshot_manuscript_text: sermon.manuscript_text ?? null,
+            snapshot_scripture_reference: sermon.scripture_reference ?? null,
+            snapshot_theme: sermon.theme ?? null,
+            snapshot_notes: sermon.notes ?? null,
+            label: label.trim() || null,
+          })
+          .select()
+          .single()
+      );
+      if (err) throw err;
+      setRevisions((rs) => [data, ...rs]);
+      setLabel('');
+      setOpen(false);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setSnapshotting(false);
+    }
+  };
+
+  const deleteRevision = async (rev) => {
+    if (
+      !window.confirm(
+        `Delete this snapshot${rev.label ? ` ("${rev.label}")` : ''}? This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setDeletingId(rev.id);
+    setError(null);
+    try {
+      const { error: err } = await withTimeout(
+        supabase.from('sermon_revisions').delete().eq('id', rev.id)
+      );
+      if (err) throw err;
+      setRevisions((rs) => rs.filter((r) => r.id !== rev.id));
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.delete(rev.id);
+        return next;
+      });
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-lg text-umc-900">
+            Past versions
+            {revisions.length > 0 && (
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                ({revisions.length})
+              </span>
+            )}
+          </h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Snapshot the current title + manuscript before a major rewrite.
+          </p>
+        </div>
+        {!open && (
+          <button
+            type="button"
+            onClick={() => {
+              setOpen(true);
+              setError(null);
+            }}
+            className="btn-secondary text-sm whitespace-nowrap"
+          >
+            + Snapshot current version
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+          <div>
+            <label className="label">Label (optional)</label>
+            <input
+              type="text"
+              className="input"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder='e.g., "Pre-Wedowee rewrite", "Original 2014 version"'
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Captures: title, manuscript, scripture, theme, and private notes.
+              Future edits to the sermon won't affect this snapshot.
+            </p>
+          </div>
+          {error && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {error}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={takeSnapshot}
+              disabled={snapshotting}
+              className="btn-primary disabled:opacity-50"
+            >
+              {snapshotting ? 'Saving snapshot…' : 'Save snapshot'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                setLabel('');
+                setError(null);
+              }}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {revisions.length === 0 && !open && (
+        <p className="mt-3 text-sm text-gray-400 italic">
+          No prior versions saved.
+        </p>
+      )}
+
+      {revisions.length > 0 && (
+        <ul className="mt-4 divide-y divide-gray-100">
+          {revisions.map((rev) => {
+            const isOpen = expanded.has(rev.id);
+            const titleChanged =
+              rev.snapshot_title && rev.snapshot_title !== sermon.title;
+            return (
+              <li key={rev.id} className="py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <span className="text-sm font-medium text-umc-900">
+                        {rev.label || 'Snapshot'}
+                      </span>
+                      <span className="text-xs text-gray-500">
+                        {new Date(rev.taken_at).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'short',
+                          day: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                    {rev.snapshot_title && (
+                      <div className="text-sm text-gray-700 mt-0.5">
+                        {titleChanged ? (
+                          <>
+                            <span className="text-gray-400">Then titled: </span>
+                            <span className="italic">"{rev.snapshot_title}"</span>
+                          </>
+                        ) : (
+                          <span className="italic text-gray-500">
+                            "{rev.snapshot_title}"
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(rev.id)}
+                      className="text-xs text-umc-700 hover:text-umc-900 underline"
+                    >
+                      {isOpen ? 'Hide' : 'View'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteRevision(rev)}
+                      disabled={deletingId === rev.id}
+                      className="text-xs text-red-600 hover:text-red-800 underline disabled:opacity-50"
+                    >
+                      {deletingId === rev.id ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div className="mt-3 ml-0 space-y-3 bg-gray-50 border border-gray-200 rounded p-3">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-600">
+                      {rev.snapshot_scripture_reference && (
+                        <span>
+                          <span className="text-gray-400">Scripture: </span>
+                          {rev.snapshot_scripture_reference}
+                        </span>
+                      )}
+                      {rev.snapshot_theme && (
+                        <span>
+                          <span className="text-gray-400">Theme: </span>
+                          {rev.snapshot_theme}
+                        </span>
+                      )}
+                    </div>
+                    {rev.snapshot_notes && (
+                      <div>
+                        <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                          Private notes (snapshot)
+                        </p>
+                        <p className="text-xs text-gray-700 whitespace-pre-wrap">
+                          {rev.snapshot_notes}
+                        </p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+                        Manuscript (snapshot)
+                      </p>
+                      {rev.snapshot_manuscript_text ? (
+                        <p className="text-sm text-gray-800 whitespace-pre-wrap font-serif leading-relaxed max-h-[400px] overflow-y-auto">
+                          {rev.snapshot_manuscript_text}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-gray-400 italic">
+                          No manuscript at the time of this snapshot.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
