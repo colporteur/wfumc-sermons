@@ -1,0 +1,536 @@
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { supabase, withTimeout } from '../lib/supabase';
+import { analyzeResource } from '../lib/claude';
+import LoadingSpinner from '../components/LoadingSpinner.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
+
+const TYPE_CHOICES = [
+  { value: 'story', label: 'Story' },
+  { value: 'quote', label: 'Quote' },
+  { value: 'illustration', label: 'Illustration' },
+  { value: 'joke', label: 'Joke' },
+  { value: 'note', label: 'Note' },
+];
+
+const TYPE_BADGE = {
+  story: { label: 'Story', cls: 'bg-blue-100 text-blue-800' },
+  quote: { label: 'Quote', cls: 'bg-purple-100 text-purple-800' },
+  illustration: { label: 'Illustration', cls: 'bg-amber-100 text-amber-800' },
+  joke: { label: 'Joke', cls: 'bg-green-100 text-green-800' },
+  note: { label: 'Note', cls: 'bg-gray-200 text-gray-700' },
+};
+
+export default function ResourceDetail() {
+  const { user } = useAuth();
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [resource, setResource] = useState(null);
+  // sermons that link to this resource (via sermon_resources)
+  const [usedIn, setUsedIn] = useState([]);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState(null);
+
+  useEffect(() => {
+    if (!user?.id) return;
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [resourceRes, linksRes] = await Promise.all([
+          withTimeout(
+            supabase
+              .from('resources')
+              .select('*')
+              .eq('id', id)
+              .eq('owner_user_id', user.id)
+              .maybeSingle()
+          ),
+          withTimeout(
+            supabase
+              .from('sermon_resources')
+              .select(
+                'id, used_notes, created_at, sermon:sermons(id, title, original_sermon_number)'
+              )
+              .eq('resource_id', id)
+              .eq('owner_user_id', user.id)
+              .order('created_at', { ascending: false })
+          ),
+        ]);
+        if (resourceRes.error) throw resourceRes.error;
+        if (linksRes.error) throw linksRes.error;
+        if (cancelled) return;
+        setResource(resourceRes.data);
+        setUsedIn(linksRes.data ?? []);
+      } catch (e) {
+        if (!cancelled) setError(e.message || String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, user?.id]);
+
+  const startEdit = () => {
+    if (!resource) return;
+    setDraft({
+      resource_type: resource.resource_type,
+      title: resource.title ?? '',
+      content: resource.content ?? '',
+      source: resource.source ?? '',
+      source_url: resource.source_url ?? '',
+      themes: (resource.themes ?? []).join(', '),
+      scripture_refs: resource.scripture_refs ?? '',
+      tone: resource.tone ?? '',
+      notes: resource.notes ?? '',
+    });
+    setEditing(true);
+    setAnalyzeError(null);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setDraft(null);
+  };
+
+  const runAnalyze = async () => {
+    if (!draft || !draft.content.trim()) {
+      setAnalyzeError('Add some content first.');
+      return;
+    }
+    setAnalyzing(true);
+    setAnalyzeError(null);
+    try {
+      const result = await analyzeResource({
+        content: draft.content,
+        type: draft.resource_type,
+        title: draft.title || undefined,
+        source: draft.source || undefined,
+      });
+      setDraft((d) => ({
+        ...d,
+        themes: d.themes.trim()
+          ? d.themes
+          : (result.themes ?? []).join(', '),
+        scripture_refs: d.scripture_refs.trim()
+          ? d.scripture_refs
+          : result.scripture_refs ?? '',
+        tone: d.tone.trim() ? d.tone : result.tone ?? '',
+      }));
+    } catch (e) {
+      setAnalyzeError(e.message || String(e));
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  const save = async () => {
+    if (!draft) return;
+    if (!draft.content.trim()) {
+      setError('Content is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const themes = draft.themes
+        .split(',')
+        .map((t) => t.trim().toLowerCase())
+        .filter(Boolean);
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('resources')
+          .update({
+            resource_type: draft.resource_type,
+            title: draft.title.trim() || null,
+            content: draft.content.trim(),
+            source: draft.source.trim() || null,
+            source_url: draft.source_url.trim() || null,
+            themes,
+            scripture_refs: draft.scripture_refs.trim() || null,
+            tone: draft.tone.trim() || null,
+            notes: draft.notes.trim() || null,
+          })
+          .eq('id', resource.id)
+          .select()
+          .single()
+      );
+      if (err) throw err;
+      setResource(data);
+      setEditing(false);
+      setDraft(null);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!resource) return;
+    if (
+      !window.confirm(
+        `Delete this ${resource.resource_type}? It will be unlinked from any sermons that used it. This can't be undone.`
+      )
+    ) {
+      return;
+    }
+    setDeleting(true);
+    setError(null);
+    try {
+      const { error: err } = await withTimeout(
+        supabase.from('resources').delete().eq('id', resource.id)
+      );
+      if (err) throw err;
+      navigate('/resources');
+    } catch (e) {
+      setError(e.message || String(e));
+      setDeleting(false);
+    }
+  };
+
+  if (loading) return <LoadingSpinner label="Loading resource…" />;
+  if (error && !resource) {
+    return (
+      <div className="card text-center space-y-3">
+        <p className="text-sm text-red-700">Couldn't load resource.</p>
+        <p className="text-xs text-gray-500">{error}</p>
+        <Link to="/resources" className="btn-secondary inline-block">
+          ← Back to resources
+        </Link>
+      </div>
+    );
+  }
+  if (!resource) {
+    return (
+      <div className="card text-center space-y-3">
+        <h1 className="font-serif text-xl text-umc-900">Resource not found</h1>
+        <Link to="/resources" className="btn-secondary inline-block">
+          ← Back to resources
+        </Link>
+      </div>
+    );
+  }
+
+  const badge = TYPE_BADGE[resource.resource_type] ?? TYPE_BADGE.note;
+
+  return (
+    <div className="space-y-6">
+      <Link
+        to="/resources"
+        className="inline-block text-sm text-gray-500 hover:text-gray-700"
+      >
+        ← All resources
+      </Link>
+
+      <div className="card space-y-4">
+        {editing ? (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="label">Type</label>
+                <select
+                  className="input"
+                  value={draft.resource_type}
+                  onChange={(e) =>
+                    setDraft({ ...draft, resource_type: e.target.value })
+                  }
+                >
+                  {TYPE_CHOICES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="label">Title</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={draft.title}
+                  onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label">Content *</label>
+              <textarea
+                className="input min-h-[200px]"
+                value={draft.content}
+                onChange={(e) =>
+                  setDraft({ ...draft, content: e.target.value })
+                }
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Source</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={draft.source}
+                  onChange={(e) =>
+                    setDraft({ ...draft, source: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="label">Source URL</label>
+                <input
+                  type="url"
+                  className="input"
+                  value={draft.source_url}
+                  onChange={(e) =>
+                    setDraft({ ...draft, source_url: e.target.value })
+                  }
+                />
+              </div>
+            </div>
+            <div className="border border-dashed border-gray-300 rounded p-3 bg-gray-50">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-gray-600">
+                  Re-run Claude analysis. Existing values won't be overwritten.
+                </p>
+                <button
+                  type="button"
+                  onClick={runAnalyze}
+                  disabled={analyzing || !draft.content.trim()}
+                  className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                >
+                  {analyzing ? 'Analyzing…' : '✨ Analyze with Claude'}
+                </button>
+              </div>
+              {analyzeError && (
+                <p className="text-xs text-red-600 mt-2">{analyzeError}</p>
+              )}
+            </div>
+            <div>
+              <label className="label">Themes (comma-separated)</label>
+              <input
+                type="text"
+                className="input"
+                value={draft.themes}
+                onChange={(e) => setDraft({ ...draft, themes: e.target.value })}
+              />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="label">Scripture connections</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={draft.scripture_refs}
+                  onChange={(e) =>
+                    setDraft({ ...draft, scripture_refs: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="label">Tone</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={draft.tone}
+                  onChange={(e) => setDraft({ ...draft, tone: e.target.value })}
+                />
+              </div>
+            </div>
+            <div>
+              <label className="label">Private notes</label>
+              <textarea
+                className="input min-h-[80px]"
+                value={draft.notes}
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              />
+            </div>
+            {error && (
+              <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {error}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={save}
+                disabled={saving}
+                className="btn-primary disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save changes'}
+              </button>
+              <button
+                type="button"
+                onClick={cancelEdit}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  <span
+                    className={`px-2 py-0.5 text-[10px] uppercase tracking-wide rounded ${badge.cls}`}
+                  >
+                    {badge.label}
+                  </span>
+                  {resource.title && (
+                    <h1 className="font-serif text-2xl text-umc-900">
+                      {resource.title}
+                    </h1>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className="btn-secondary text-sm"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={remove}
+                  disabled={deleting}
+                  className="text-sm text-red-600 hover:text-red-800 underline disabled:opacity-50"
+                >
+                  {deleting ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            </div>
+            <p className="mt-4 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
+              {resource.content}
+            </p>
+            {(resource.source || resource.source_url) && (
+              <div className="mt-3 text-sm text-gray-600">
+                {resource.source && <span>— {resource.source}</span>}
+                {resource.source_url && (
+                  <>
+                    {resource.source && <span className="mx-2">·</span>}
+                    <a
+                      href={resource.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-umc-700 hover:text-umc-900 underline break-all"
+                    >
+                      {resource.source_url}
+                    </a>
+                  </>
+                )}
+              </div>
+            )}
+            <div className="mt-4 pt-4 border-t border-gray-100 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                  Themes
+                </p>
+                {(resource.themes ?? []).length === 0 ? (
+                  <p className="text-xs text-gray-400 italic">None</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1">
+                    {resource.themes.map((t) => (
+                      <span
+                        key={t}
+                        className="px-2 py-0.5 text-[10px] rounded bg-umc-100 text-umc-900"
+                      >
+                        {t}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                  Scripture connections
+                </p>
+                <p className="text-sm text-gray-700">
+                  {resource.scripture_refs || (
+                    <span className="text-xs text-gray-400 italic">None</span>
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                  Tone
+                </p>
+                <p className="text-sm text-gray-700">
+                  {resource.tone || (
+                    <span className="text-xs text-gray-400 italic">—</span>
+                  )}
+                </p>
+              </div>
+            </div>
+            {resource.notes && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                  Private notes
+                </p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {resource.notes}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Used in */}
+      <div className="card">
+        <h2 className="font-serif text-lg text-umc-900">
+          Used in
+          <span className="ml-2 text-sm font-normal text-gray-500">
+            ({usedIn.length})
+          </span>
+        </h2>
+        {usedIn.length === 0 ? (
+          <p className="mt-2 text-sm text-gray-400 italic">
+            Not yet linked to any sermons. Link this resource from a sermon's
+            detail page when you use it.
+          </p>
+        ) : (
+          <ul className="mt-2 divide-y divide-gray-100">
+            {usedIn.map((link) => (
+              <li key={link.id} className="py-2">
+                {link.sermon ? (
+                  <Link
+                    to={`/sermons/${link.sermon.id}`}
+                    className="text-sm text-umc-700 hover:text-umc-900"
+                  >
+                    {link.sermon.original_sermon_number && (
+                      <span className="text-xs text-gray-400 font-mono mr-2">
+                        #{link.sermon.original_sermon_number}
+                      </span>
+                    )}
+                    {link.sermon.title || (
+                      <span className="italic text-gray-500">Untitled</span>
+                    )}
+                  </Link>
+                ) : (
+                  <span className="text-sm text-gray-400 italic">
+                    Sermon deleted
+                  </span>
+                )}
+                {link.used_notes && (
+                  <p className="text-xs text-gray-500 mt-1">{link.used_notes}</p>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}

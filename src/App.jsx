@@ -6,6 +6,9 @@ import SermonList from './pages/SermonList.jsx';
 import SermonDetail from './pages/SermonDetail.jsx';
 import SermonNew from './pages/SermonNew.jsx';
 import Import from './pages/Import.jsx';
+import ResourceList from './pages/ResourceList.jsx';
+import ResourceNew from './pages/ResourceNew.jsx';
+import ResourceDetail from './pages/ResourceDetail.jsx';
 
 export default function App() {
   return (
@@ -21,6 +24,9 @@ export default function App() {
         <Route path="/" element={<SermonList />} />
         <Route path="/sermons/new" element={<SermonNew />} />
         <Route path="/sermons/:id" element={<SermonDetail />} />
+        <Route path="/resources" element={<ResourceList />} />
+        <Route path="/resources/new" element={<ResourceNew />} />
+        <Route path="/resources/:id" element={<ResourceDetail />} />
         <Route path="/import" element={<Import />} />
       </Route>
       <Route path="*" element={<NotFound />} />

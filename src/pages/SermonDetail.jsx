@@ -24,6 +24,8 @@ export default function SermonDetail() {
   const [preachedAt, setPreachedAt] = useState([]);
   // Snapshots of prior versions of this sermon (sermon_revisions table)
   const [revisions, setRevisions] = useState([]);
+  // Resources linked to this sermon (sermon_resources rows w/ resource joined)
+  const [linkedResources, setLinkedResources] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState({
@@ -46,41 +48,54 @@ export default function SermonDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, preachingsRes, revisionsRes] = await Promise.all([
-          withTimeout(
-            supabase
-              .from('sermons')
-              .select('*')
-              .eq('id', id)
-              .eq('owner_user_id', user.id)
-              .maybeSingle()
-          ),
-          withTimeout(
-            supabase
-              .from('preachings')
-              .select(
-                '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
-              )
-              .eq('sermon_id', id)
-              .eq('owner_user_id', user.id)
-              .order('preached_at', { ascending: false, nullsFirst: false })
-          ),
-          withTimeout(
-            supabase
-              .from('sermon_revisions')
-              .select('*')
-              .eq('sermon_id', id)
-              .eq('owner_user_id', user.id)
-              .order('taken_at', { ascending: false })
-          ),
-        ]);
+        const [sermonRes, preachingsRes, revisionsRes, resourcesRes] =
+          await Promise.all([
+            withTimeout(
+              supabase
+                .from('sermons')
+                .select('*')
+                .eq('id', id)
+                .eq('owner_user_id', user.id)
+                .maybeSingle()
+            ),
+            withTimeout(
+              supabase
+                .from('preachings')
+                .select(
+                  '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
+                )
+                .eq('sermon_id', id)
+                .eq('owner_user_id', user.id)
+                .order('preached_at', { ascending: false, nullsFirst: false })
+            ),
+            withTimeout(
+              supabase
+                .from('sermon_revisions')
+                .select('*')
+                .eq('sermon_id', id)
+                .eq('owner_user_id', user.id)
+                .order('taken_at', { ascending: false })
+            ),
+            withTimeout(
+              supabase
+                .from('sermon_resources')
+                .select(
+                  'id, used_notes, created_at, resource:resources(id, resource_type, title, content, source, themes, tone)'
+                )
+                .eq('sermon_id', id)
+                .eq('owner_user_id', user.id)
+                .order('created_at', { ascending: false })
+            ),
+          ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachingsRes.error) throw preachingsRes.error;
         if (revisionsRes.error) throw revisionsRes.error;
+        if (resourcesRes.error) throw resourcesRes.error;
         if (cancelled) return;
         setSermon(sermonRes.data);
         setPreachedAt(preachingsRes.data ?? []);
         setRevisions(revisionsRes.data ?? []);
+        setLinkedResources(resourcesRes.data ?? []);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -472,8 +487,377 @@ export default function SermonDetail() {
         userId={user?.id}
       />
 
+      {/* Resources used in this sermon */}
+      <SermonResourcesCard
+        sermon={sermon}
+        linkedResources={linkedResources}
+        setLinkedResources={setLinkedResources}
+        userId={user?.id}
+      />
+
       {/* Manuscript */}
       <ManuscriptCard sermon={sermon} setSermon={setSermon} />
+    </div>
+  );
+}
+
+// Panel showing resources (stories/quotes/illustrations/jokes/notes) the
+// pastor has tagged as used in this sermon. Lets him search his library
+// and link an existing resource, or add a usage note.
+function SermonResourcesCard({
+  sermon,
+  linkedResources,
+  setLinkedResources,
+  userId,
+}) {
+  const [adding, setAdding] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searching, setSearching] = useState(false);
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchError, setSearchError] = useState(null);
+  const [usedNotes, setUsedNotes] = useState('');
+  const [picked, setPicked] = useState(null);
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState(null);
+  const [unlinkingId, setUnlinkingId] = useState(null);
+
+  const linkedIds = new Set(
+    linkedResources.map((l) => l.resource?.id).filter(Boolean)
+  );
+
+  const runSearch = async (q) => {
+    setSearch(q);
+    if (!q.trim() || !userId) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    setSearchError(null);
+    try {
+      // Search title + content + scripture + tone via or() ilike patterns.
+      const term = `%${q.trim()}%`;
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('resources')
+          .select('id, resource_type, title, content, source, themes')
+          .eq('owner_user_id', userId)
+          .or(
+            `title.ilike.${term},content.ilike.${term},scripture_refs.ilike.${term},tone.ilike.${term}`
+          )
+          .limit(15)
+      );
+      if (err) throw err;
+      setSearchResults(data ?? []);
+    } catch (e) {
+      setSearchError(e.message || String(e));
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const reset = () => {
+    setAdding(false);
+    setSearch('');
+    setSearchResults([]);
+    setSearchError(null);
+    setUsedNotes('');
+    setPicked(null);
+    setLinkError(null);
+  };
+
+  const linkPicked = async () => {
+    if (!picked || !userId || !sermon) return;
+    setLinking(true);
+    setLinkError(null);
+    try {
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermon_resources')
+          .insert({
+            sermon_id: sermon.id,
+            resource_id: picked.id,
+            owner_user_id: userId,
+            used_notes: usedNotes.trim() || null,
+          })
+          .select(
+            'id, used_notes, created_at, resource:resources(id, resource_type, title, content, source, themes, tone)'
+          )
+          .single()
+      );
+      if (err) throw err;
+      setLinkedResources((rs) => [data, ...rs]);
+      reset();
+    } catch (e) {
+      setLinkError(e.message || String(e));
+    } finally {
+      setLinking(false);
+    }
+  };
+
+  const unlink = async (link) => {
+    if (
+      !window.confirm(
+        `Remove this resource link? The resource itself stays in your library.`
+      )
+    ) {
+      return;
+    }
+    setUnlinkingId(link.id);
+    try {
+      const { error: err } = await withTimeout(
+        supabase.from('sermon_resources').delete().eq('id', link.id)
+      );
+      if (err) throw err;
+      setLinkedResources((rs) => rs.filter((r) => r.id !== link.id));
+    } catch (e) {
+      setLinkError(e.message || String(e));
+    } finally {
+      setUnlinkingId(null);
+    }
+  };
+
+  const TYPE_BADGE = {
+    story: { label: 'Story', cls: 'bg-blue-100 text-blue-800' },
+    quote: { label: 'Quote', cls: 'bg-purple-100 text-purple-800' },
+    illustration: { label: 'Illustration', cls: 'bg-amber-100 text-amber-800' },
+    joke: { label: 'Joke', cls: 'bg-green-100 text-green-800' },
+    note: { label: 'Note', cls: 'bg-gray-200 text-gray-700' },
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <h2 className="font-serif text-lg text-umc-900">
+            Resources used
+            {linkedResources.length > 0 && (
+              <span className="ml-2 text-sm font-normal text-gray-500">
+                ({linkedResources.length})
+              </span>
+            )}
+          </h2>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Stories, quotes, and illustrations from your library used in this sermon.
+          </p>
+        </div>
+        {!adding && (
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className="btn-secondary text-sm whitespace-nowrap"
+          >
+            + Link resource
+          </button>
+        )}
+      </div>
+
+      {adding && (
+        <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+          {!picked ? (
+            <>
+              <div>
+                <label className="label">Search your library</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={search}
+                  onChange={(e) => runSearch(e.target.value)}
+                  placeholder="Title, content, scripture…"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Don't see it?{' '}
+                  <Link
+                    to="/resources/new"
+                    className="underline hover:text-gray-700"
+                  >
+                    Create a new resource
+                  </Link>{' '}
+                  first, then come back and link it.
+                </p>
+              </div>
+              {searchError && (
+                <p className="text-xs text-red-600">{searchError}</p>
+              )}
+              {searching && (
+                <p className="text-xs text-gray-500">Searching…</p>
+              )}
+              {!searching && search.trim() && searchResults.length === 0 && (
+                <p className="text-xs text-gray-500">No matches.</p>
+              )}
+              {searchResults.length > 0 && (
+                <ul className="divide-y divide-gray-100 border border-gray-200 rounded">
+                  {searchResults.map((r) => {
+                    const already = linkedIds.has(r.id);
+                    const badge = TYPE_BADGE[r.resource_type] ?? TYPE_BADGE.note;
+                    return (
+                      <li key={r.id}>
+                        <button
+                          type="button"
+                          disabled={already}
+                          onClick={() => setPicked(r)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <div className="flex items-baseline gap-2">
+                            <span
+                              className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded ${badge.cls}`}
+                            >
+                              {badge.label}
+                            </span>
+                            {r.title && (
+                              <span className="text-sm font-medium text-umc-900 truncate">
+                                {r.title}
+                              </span>
+                            )}
+                            {already && (
+                              <span className="text-[10px] text-gray-500 italic">
+                                already linked
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-gray-600 line-clamp-2 mt-1">
+                            {r.content}
+                          </p>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <div className="flex">
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="btn-secondary text-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="bg-gray-50 border border-gray-200 rounded p-3">
+                <div className="flex items-baseline gap-2">
+                  <span
+                    className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded ${
+                      (TYPE_BADGE[picked.resource_type] ?? TYPE_BADGE.note).cls
+                    }`}
+                  >
+                    {(TYPE_BADGE[picked.resource_type] ?? TYPE_BADGE.note).label}
+                  </span>
+                  {picked.title && (
+                    <span className="text-sm font-medium text-umc-900">
+                      {picked.title}
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-700 line-clamp-3 mt-1 whitespace-pre-wrap">
+                  {picked.content}
+                </p>
+              </div>
+              <div>
+                <label className="label">How was it used? (optional)</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={usedNotes}
+                  onChange={(e) => setUsedNotes(e.target.value)}
+                  placeholder='e.g., "Opener", "After the second point"'
+                />
+              </div>
+              {linkError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                  {linkError}
+                </p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={linkPicked}
+                  disabled={linking}
+                  className="btn-primary disabled:opacity-50"
+                >
+                  {linking ? 'Linking…' : 'Link this resource'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPicked(null)}
+                  className="btn-secondary"
+                >
+                  Pick a different one
+                </button>
+                <button
+                  type="button"
+                  onClick={reset}
+                  className="text-sm text-gray-500 hover:text-gray-700 underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {linkedResources.length === 0 && !adding && (
+        <p className="mt-3 text-sm text-gray-400 italic">
+          No resources linked to this sermon yet.
+        </p>
+      )}
+
+      {linkedResources.length > 0 && (
+        <ul className="mt-4 divide-y divide-gray-100">
+          {linkedResources.map((link) => {
+            const r = link.resource;
+            if (!r) return null;
+            const badge = TYPE_BADGE[r.resource_type] ?? TYPE_BADGE.note;
+            return (
+              <li key={link.id} className="py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <Link
+                    to={`/resources/${r.id}`}
+                    className="min-w-0 flex-1 hover:opacity-80"
+                  >
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span
+                        className={`px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded ${badge.cls}`}
+                      >
+                        {badge.label}
+                      </span>
+                      {r.title && (
+                        <span className="text-sm font-medium text-umc-900">
+                          {r.title}
+                        </span>
+                      )}
+                      {r.tone && (
+                        <span className="text-xs italic text-gray-500">
+                          {r.tone}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-700 line-clamp-2 mt-1 whitespace-pre-wrap">
+                      {r.content}
+                    </p>
+                    {link.used_notes && (
+                      <p className="text-xs text-gray-500 mt-1 italic">
+                        Used: {link.used_notes}
+                      </p>
+                    )}
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => unlink(link)}
+                    disabled={unlinkingId === link.id}
+                    className="text-xs text-red-600 hover:text-red-800 underline shrink-0 disabled:opacity-50"
+                  >
+                    {unlinkingId === link.id ? 'Removing…' : 'Unlink'}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

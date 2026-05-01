@@ -21,6 +21,12 @@ export default function Layout() {
           {session && (
             <div className="flex items-center gap-3 sm:gap-4 text-sm">
               <Link
+                to="/resources"
+                className="text-umc-100 hover:text-white underline whitespace-nowrap"
+              >
+                Resources
+              </Link>
+              <Link
                 to="/import"
                 className="text-umc-100 hover:text-white underline whitespace-nowrap"
               >
