@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { analyzeResource } from '../lib/claude';
+import { listMyLibraries } from '../lib/libraries';
+import {
+  uploadResourceImage,
+  publicResourceImageUrl,
+} from '../lib/resourceImages';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 const TYPE_CHOICES = [
@@ -10,6 +15,7 @@ const TYPE_CHOICES = [
   { value: 'illustration', label: 'Illustration' },
   { value: 'joke', label: 'Joke' },
   { value: 'note', label: 'Note' },
+  { value: 'photo', label: 'Photo' },
 ];
 
 const EMPTY = {
@@ -22,18 +28,68 @@ const EMPTY = {
   scripture_refs: '',
   tone: '',
   notes: '',
+  library_id: '', // '' = personal/private; otherwise a library uuid
 };
+
+// Remember last library choice so the next "+ New resource" defaults to
+// the same place (most users want to file new things into the same pool).
+const LAST_LIB_KEY = 'wfumc-resources-last-library';
 
 export default function ResourceNew() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [draft, setDraft] = useState(EMPTY);
+  const [draft, setDraft] = useState(() => {
+    const last =
+      typeof window !== 'undefined'
+        ? window.localStorage.getItem(LAST_LIB_KEY) || ''
+        : '';
+    return { ...EMPTY, library_id: last };
+  });
+  const [libraries, setLibraries] = useState([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
+  // Photo upload state — file held in component state until save, then
+  // uploaded with the new resource id as the path prefix.
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    listMyLibraries()
+      .then((libs) => setLibraries(libs))
+      .catch(() => setLibraries([]));
+  }, []);
+
+  // Whenever the user picks a file, generate a preview URL.
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const handleImageChoose = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) {
+      setError('That file does not appear to be an image.');
+      return;
+    }
+    setError(null);
+    setImageFile(f);
+  };
+
+  const clearImage = () => {
+    setImageFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const runAnalyze = async () => {
     if (!draft.content.trim()) {
@@ -69,8 +125,13 @@ export default function ResourceNew() {
 
   const save = async () => {
     if (!user?.id) return;
-    if (!draft.content.trim()) {
+    const isPhoto = draft.resource_type === 'photo';
+    if (!isPhoto && !draft.content.trim()) {
       setError('Content is required.');
+      return;
+    }
+    if (isPhoto && !imageFile) {
+      setError('Pick a photo to upload.');
       return;
     }
     setSaving(true);
@@ -80,14 +141,17 @@ export default function ResourceNew() {
         .split(',')
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
-      const { data, error: err } = await withTimeout(
+      // Step 1: insert the row (no image_path yet).
+      const { data: created, error: err } = await withTimeout(
         supabase
           .from('resources')
           .insert({
             owner_user_id: user.id,
+            library_id: draft.library_id || null,
             resource_type: draft.resource_type,
             title: draft.title.trim() || null,
-            content: draft.content.trim(),
+            // For photos, allow empty content (it's just a caption).
+            content: draft.content.trim() || (isPhoto ? '' : draft.content),
             source: draft.source.trim() || null,
             source_url: draft.source_url.trim() || null,
             themes,
@@ -99,7 +163,28 @@ export default function ResourceNew() {
           .single()
       );
       if (err) throw err;
-      navigate(`/resources/${data.id}`);
+
+      // Step 2: if photo, upload image then patch image_path.
+      if (isPhoto && imageFile) {
+        const path = await uploadResourceImage({
+          file: imageFile,
+          ownerUserId: user.id,
+          resourceId: created.id,
+        });
+        const { error: updateErr } = await withTimeout(
+          supabase
+            .from('resources')
+            .update({ image_path: path })
+            .eq('id', created.id)
+        );
+        if (updateErr) throw updateErr;
+      }
+
+      // Remember library choice for next time.
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(LAST_LIB_KEY, draft.library_id || '');
+      }
+      navigate(`/resources/${created.id}`);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -134,25 +219,94 @@ export default function ResourceNew() {
               ))}
             </select>
           </div>
-          <div className="sm:col-span-2">
+          <div>
+            <label className="label">Library</label>
+            <select
+              className="input"
+              value={draft.library_id}
+              onChange={(e) => set('library_id', e.target.value)}
+            >
+              <option value="">Just me (private)</option>
+              {libraries.map((lib) => (
+                <option key={lib.id} value={lib.id}>
+                  {lib.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="label">Title (optional)</label>
             <input
               type="text"
               className="input"
               value={draft.title}
               onChange={(e) => set('title', e.target.value)}
-              placeholder='e.g., "The lost sheep parable retold"'
+              placeholder='e.g., "Lost sheep retold"'
             />
           </div>
         </div>
 
+        {/* Photo upload (only when type = photo) */}
+        {draft.resource_type === 'photo' && (
+          <div className="border border-dashed border-gray-300 rounded p-3 bg-gray-50 space-y-3">
+            <label className="label">Photo *</label>
+            {imagePreview ? (
+              <div className="space-y-2">
+                <img
+                  src={imagePreview}
+                  alt="preview"
+                  className="max-h-80 rounded border border-gray-200 bg-white"
+                />
+                <div className="flex gap-2">
+                  <label className="btn-secondary text-sm cursor-pointer">
+                    Choose different
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageChoose}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={clearImage}
+                    className="text-sm text-red-600 hover:text-red-800 underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <label className="btn-secondary text-sm cursor-pointer inline-block">
+                📷 Choose a photo
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleImageChoose}
+                />
+              </label>
+            )}
+          </div>
+        )}
+
         <div>
-          <label className="label">Content *</label>
+          <label className="label">
+            {draft.resource_type === 'photo'
+              ? 'Caption (optional)'
+              : 'Content *'}
+          </label>
           <textarea
             className="input min-h-[200px]"
             value={draft.content}
             onChange={(e) => set('content', e.target.value)}
-            placeholder="The story, quote, illustration, or note itself."
+            placeholder={
+              draft.resource_type === 'photo'
+                ? 'Optional caption or context for the photo.'
+                : 'The story, quote, illustration, or note itself.'
+            }
           />
         </div>
 

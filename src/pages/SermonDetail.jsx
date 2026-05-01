@@ -535,12 +535,14 @@ function SermonResourcesCard({
     setSearchError(null);
     try {
       // Search title + content + scripture + tone via or() ilike patterns.
+      // No owner filter — RLS already returns rows you own AND rows in
+      // libraries you're a member of, so co-pastor's contributions are
+      // findable here too.
       const term = `%${q.trim()}%`;
       const { data, error: err } = await withTimeout(
         supabase
           .from('resources')
           .select('id, resource_type, title, content, source, themes')
-          .eq('owner_user_id', userId)
           .or(
             `title.ilike.${term},content.ilike.${term},scripture_refs.ilike.${term},tone.ilike.${term}`
           )

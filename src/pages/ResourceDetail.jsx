@@ -1,7 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { analyzeResource } from '../lib/claude';
+import { listMyLibraries } from '../lib/libraries';
+import {
+  uploadResourceImage,
+  publicResourceImageUrl,
+  deleteResourceImage,
+} from '../lib/resourceImages';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -11,6 +17,7 @@ const TYPE_CHOICES = [
   { value: 'illustration', label: 'Illustration' },
   { value: 'joke', label: 'Joke' },
   { value: 'note', label: 'Note' },
+  { value: 'photo', label: 'Photo' },
 ];
 
 const TYPE_BADGE = {
@@ -19,6 +26,7 @@ const TYPE_BADGE = {
   illustration: { label: 'Illustration', cls: 'bg-amber-100 text-amber-800' },
   joke: { label: 'Joke', cls: 'bg-green-100 text-green-800' },
   note: { label: 'Note', cls: 'bg-gray-200 text-gray-700' },
+  photo: { label: 'Photo', cls: 'bg-pink-100 text-pink-800' },
 };
 
 export default function ResourceDetail() {
@@ -30,12 +38,27 @@ export default function ResourceDetail() {
   const [resource, setResource] = useState(null);
   // sermons that link to this resource (via sermon_resources)
   const [usedIn, setUsedIn] = useState([]);
+  const [libraries, setLibraries] = useState([]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
+  // For photo edits: optional new file to upload on save
+  const [imageFile, setImageFile] = useState(null);
+  const [imagePreview, setImagePreview] = useState(null);
+  const fileInputRef = useRef(null);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setImagePreview(null);
+      return;
+    }
+    const url = URL.createObjectURL(imageFile);
+    setImagePreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [imageFile]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -44,14 +67,11 @@ export default function ResourceDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [resourceRes, linksRes] = await Promise.all([
+        const [resourceRes, linksRes, libsResult] = await Promise.all([
+          // No owner filter — we want library-shared resources too. RLS
+          // enforces visibility (owner OR library member).
           withTimeout(
-            supabase
-              .from('resources')
-              .select('*')
-              .eq('id', id)
-              .eq('owner_user_id', user.id)
-              .maybeSingle()
+            supabase.from('resources').select('*').eq('id', id).maybeSingle()
           ),
           withTimeout(
             supabase
@@ -63,12 +83,14 @@ export default function ResourceDetail() {
               .eq('owner_user_id', user.id)
               .order('created_at', { ascending: false })
           ),
+          listMyLibraries().catch(() => []),
         ]);
         if (resourceRes.error) throw resourceRes.error;
         if (linksRes.error) throw linksRes.error;
         if (cancelled) return;
         setResource(resourceRes.data);
         setUsedIn(linksRes.data ?? []);
+        setLibraries(libsResult);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -92,14 +114,34 @@ export default function ResourceDetail() {
       scripture_refs: resource.scripture_refs ?? '',
       tone: resource.tone ?? '',
       notes: resource.notes ?? '',
+      library_id: resource.library_id ?? '',
     });
     setEditing(true);
     setAnalyzeError(null);
+    setImageFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const cancelEdit = () => {
     setEditing(false);
     setDraft(null);
+    setImageFile(null);
+  };
+
+  const handleImageChoose = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    if (!f.type.startsWith('image/')) {
+      setError('That file does not appear to be an image.');
+      return;
+    }
+    setError(null);
+    setImageFile(f);
+  };
+
+  const clearChosenImage = () => {
+    setImageFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const runAnalyze = async () => {
@@ -135,8 +177,13 @@ export default function ResourceDetail() {
 
   const save = async () => {
     if (!draft) return;
-    if (!draft.content.trim()) {
+    const isPhoto = draft.resource_type === 'photo';
+    if (!isPhoto && !draft.content.trim()) {
       setError('Content is required.');
+      return;
+    }
+    if (isPhoto && !resource.image_path && !imageFile) {
+      setError('Pick a photo to upload.');
       return;
     }
     setSaving(true);
@@ -146,28 +193,45 @@ export default function ResourceDetail() {
         .split(',')
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
+      // Upload new image first if provided.
+      let imagePath = resource.image_path;
+      let oldPathToDelete = null;
+      if (imageFile && user?.id) {
+        const newPath = await uploadResourceImage({
+          file: imageFile,
+          ownerUserId: user.id,
+          resourceId: resource.id,
+        });
+        if (resource.image_path) oldPathToDelete = resource.image_path;
+        imagePath = newPath;
+      }
       const { data, error: err } = await withTimeout(
         supabase
           .from('resources')
           .update({
             resource_type: draft.resource_type,
+            library_id: draft.library_id || null,
             title: draft.title.trim() || null,
-            content: draft.content.trim(),
+            content: draft.content.trim() || (isPhoto ? '' : draft.content),
             source: draft.source.trim() || null,
             source_url: draft.source_url.trim() || null,
             themes,
             scripture_refs: draft.scripture_refs.trim() || null,
             tone: draft.tone.trim() || null,
             notes: draft.notes.trim() || null,
+            image_path: isPhoto ? imagePath : null,
           })
           .eq('id', resource.id)
           .select()
           .single()
       );
       if (err) throw err;
+      // Best-effort cleanup of replaced image (don't block on failure).
+      if (oldPathToDelete) await deleteResourceImage(oldPathToDelete);
       setResource(data);
       setEditing(false);
       setDraft(null);
+      setImageFile(null);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -191,6 +255,8 @@ export default function ResourceDetail() {
         supabase.from('resources').delete().eq('id', resource.id)
       );
       if (err) throw err;
+      // Best-effort: remove the stored image too.
+      if (resource.image_path) await deleteResourceImage(resource.image_path);
       navigate('/resources');
     } catch (e) {
       setError(e.message || String(e));
@@ -252,7 +318,24 @@ export default function ResourceDetail() {
                   ))}
                 </select>
               </div>
-              <div className="sm:col-span-2">
+              <div>
+                <label className="label">Library</label>
+                <select
+                  className="input"
+                  value={draft.library_id}
+                  onChange={(e) =>
+                    setDraft({ ...draft, library_id: e.target.value })
+                  }
+                >
+                  <option value="">Just me (private)</option>
+                  {libraries.map((lib) => (
+                    <option key={lib.id} value={lib.id}>
+                      {lib.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="label">Title</label>
                 <input
                   type="text"
@@ -262,8 +345,61 @@ export default function ResourceDetail() {
                 />
               </div>
             </div>
+            {draft.resource_type === 'photo' && (
+              <div className="border border-dashed border-gray-300 rounded p-3 bg-gray-50 space-y-3">
+                <label className="label">Photo</label>
+                {imagePreview ? (
+                  <>
+                    <p className="text-xs text-gray-500">New photo (will replace existing on save):</p>
+                    <img
+                      src={imagePreview}
+                      alt="preview"
+                      className="max-h-80 rounded border border-gray-200 bg-white"
+                    />
+                    <button
+                      type="button"
+                      onClick={clearChosenImage}
+                      className="text-sm text-red-600 hover:text-red-800 underline"
+                    >
+                      Cancel new photo
+                    </button>
+                  </>
+                ) : resource.image_path ? (
+                  <>
+                    <img
+                      src={publicResourceImageUrl(resource.image_path)}
+                      alt={resource.title || 'photo'}
+                      className="max-h-80 rounded border border-gray-200 bg-white"
+                    />
+                    <label className="btn-secondary text-sm cursor-pointer inline-block">
+                      Replace photo
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={handleImageChoose}
+                      />
+                    </label>
+                  </>
+                ) : (
+                  <label className="btn-secondary text-sm cursor-pointer inline-block">
+                    📷 Choose a photo
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={handleImageChoose}
+                    />
+                  </label>
+                )}
+              </div>
+            )}
             <div>
-              <label className="label">Content *</label>
+              <label className="label">
+                {draft.resource_type === 'photo' ? 'Caption (optional)' : 'Content *'}
+              </label>
               <textarea
                 className="input min-h-[200px]"
                 value={draft.content}
@@ -391,6 +527,23 @@ export default function ResourceDetail() {
                       {resource.title}
                     </h1>
                   )}
+                  {(() => {
+                    const lib = libraries.find((l) => l.id === resource.library_id);
+                    return lib ? (
+                      <span className="text-[10px] uppercase tracking-wide text-gray-500">
+                        in {lib.name}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] uppercase tracking-wide text-gray-400">
+                        private
+                      </span>
+                    );
+                  })()}
+                  {resource.owner_user_id !== user?.id && (
+                    <span className="text-[10px] uppercase tracking-wide text-umc-700">
+                      added by co-member
+                    </span>
+                  )}
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
@@ -411,9 +564,20 @@ export default function ResourceDetail() {
                 </button>
               </div>
             </div>
-            <p className="mt-4 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
-              {resource.content}
-            </p>
+            {resource.resource_type === 'photo' && resource.image_path && (
+              <div className="mt-4">
+                <img
+                  src={publicResourceImageUrl(resource.image_path)}
+                  alt={resource.title || 'resource photo'}
+                  className="max-w-full rounded border border-gray-200 bg-gray-50"
+                />
+              </div>
+            )}
+            {resource.content && (
+              <p className="mt-4 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
+                {resource.content}
+              </p>
+            )}
             {(resource.source || resource.source_url) && (
               <div className="mt-3 text-sm text-gray-600">
                 {resource.source && <span>— {resource.source}</span>}
