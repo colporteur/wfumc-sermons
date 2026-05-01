@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Login from './pages/Login.jsx';
 import SermonList from './pages/SermonList.jsx';
 import SermonDetail from './pages/SermonDetail.jsx';
+import Import from './pages/Import.jsx';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
       >
         <Route path="/" element={<SermonList />} />
         <Route path="/sermons/:id" element={<SermonDetail />} />
+        <Route path="/import" element={<Import />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

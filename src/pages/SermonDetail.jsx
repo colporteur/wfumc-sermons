@@ -26,6 +26,11 @@ export default function SermonDetail() {
     title: '',
     scripture_reference: '',
     theme: '',
+    lectionary_year: '',
+    strength: '',
+    timeless: '',
+    is_eulogy: false,
+    major_stories: '',
     notes: '',
     preached_at: '',
   });
@@ -36,28 +41,25 @@ export default function SermonDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, linksRes] = await Promise.all([
+        const [sermonRes, preachingsRes] = await Promise.all([
           withTimeout(
             supabase.from('sermons').select('*').eq('id', id).maybeSingle()
           ),
           withTimeout(
             supabase
-              .from('liturgy_items')
+              .from('preachings')
               .select(
-                'id, bulletin:bulletins(id, service_date, sunday_designation, status)'
+                '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
               )
               .eq('sermon_id', id)
+              .order('preached_at', { ascending: false, nullsFirst: false })
           ),
         ]);
         if (sermonRes.error) throw sermonRes.error;
-        if (linksRes.error) throw linksRes.error;
+        if (preachingsRes.error) throw preachingsRes.error;
         if (cancelled) return;
         setSermon(sermonRes.data);
-        const bulletins = (linksRes.data ?? [])
-          .map((row) => row.bulletin)
-          .filter(Boolean)
-          .sort((a, b) => (a.service_date < b.service_date ? 1 : -1));
-        setPreachedAt(bulletins);
+        setPreachedAt(preachingsRes.data ?? []);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -75,6 +77,11 @@ export default function SermonDetail() {
       title: sermon.title ?? '',
       scripture_reference: sermon.scripture_reference ?? '',
       theme: sermon.theme ?? '',
+      lectionary_year: sermon.lectionary_year ?? '',
+      strength: sermon.strength != null ? String(sermon.strength) : '',
+      timeless: sermon.timeless ?? '',
+      is_eulogy: !!sermon.is_eulogy,
+      major_stories: sermon.major_stories ?? '',
       notes: sermon.notes ?? '',
       preached_at: sermon.preached_at ?? '',
     });
@@ -89,6 +96,9 @@ export default function SermonDetail() {
     setSaving(true);
     setError(null);
     try {
+      const strengthNum = draft.strength.trim()
+        ? Number(draft.strength)
+        : null;
       const { data, error: err } = await withTimeout(
         supabase
           .from('sermons')
@@ -96,6 +106,14 @@ export default function SermonDetail() {
             title: draft.title.trim() || null,
             scripture_reference: draft.scripture_reference.trim() || null,
             theme: draft.theme.trim() || null,
+            lectionary_year: draft.lectionary_year.trim() || null,
+            strength:
+              strengthNum && !Number.isNaN(strengthNum) && strengthNum >= 1 && strengthNum <= 10
+                ? Math.round(strengthNum)
+                : null,
+            timeless: draft.timeless.trim() || null,
+            is_eulogy: !!draft.is_eulogy,
+            major_stories: draft.major_stories.trim() || null,
             notes: draft.notes.trim() || null,
             preached_at: draft.preached_at || null,
           })
@@ -183,15 +201,76 @@ export default function SermonDetail() {
                 />
               </div>
             </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div>
+                <label className="label">Lectionary year</label>
+                <input
+                  type="text"
+                  className="input"
+                  value={draft.lectionary_year}
+                  onChange={(e) =>
+                    setDraft({ ...draft, lectionary_year: e.target.value })
+                  }
+                  placeholder="e.g., 25C, Ep1C"
+                />
+              </div>
+              <div>
+                <label className="label">Strength (1-10)</label>
+                <input
+                  type="number"
+                  min="1"
+                  max="10"
+                  className="input"
+                  value={draft.strength}
+                  onChange={(e) =>
+                    setDraft({ ...draft, strength: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <label className="label">Date first preached</label>
+                <input
+                  type="date"
+                  className="input"
+                  value={draft.preached_at}
+                  onChange={(e) =>
+                    setDraft({ ...draft, preached_at: e.target.value })
+                  }
+                />
+              </div>
+            </div>
             <div>
-              <label className="label">Date first preached</label>
+              <label className="label">Timeless?</label>
               <input
-                type="date"
+                type="text"
                 className="input"
-                value={draft.preached_at}
+                value={draft.timeless}
                 onChange={(e) =>
-                  setDraft({ ...draft, preached_at: e.target.value })
+                  setDraft({ ...draft, timeless: e.target.value })
                 }
+                placeholder='e.g., "Yes", "No", "Yes, with modification"'
+              />
+            </div>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={draft.is_eulogy}
+                onChange={(e) =>
+                  setDraft({ ...draft, is_eulogy: e.target.checked })
+                }
+                className="h-4 w-4 rounded border-gray-300 text-umc-700"
+              />
+              <span className="text-sm text-gray-700">This is a eulogy</span>
+            </label>
+            <div>
+              <label className="label">Major stories / illustrations used</label>
+              <textarea
+                className="input min-h-[80px]"
+                value={draft.major_stories}
+                onChange={(e) =>
+                  setDraft({ ...draft, major_stories: e.target.value })
+                }
+                placeholder="Comma-separated list of stories, jokes, or illustrations used in this sermon."
               />
             </div>
             <div>
@@ -224,12 +303,24 @@ export default function SermonDetail() {
         ) : (
           <div>
             <div className="flex items-start justify-between gap-3">
-              <div>
-                <h1 className="font-serif text-2xl text-umc-900">
-                  {sermon.title || (
-                    <span className="italic text-gray-400">Untitled sermon</span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-baseline gap-2">
+                  {sermon.original_sermon_number && (
+                    <span className="text-sm text-gray-400 font-mono">
+                      #{sermon.original_sermon_number}
+                    </span>
                   )}
-                </h1>
+                  <h1 className="font-serif text-2xl text-umc-900">
+                    {sermon.title || (
+                      <span className="italic text-gray-400">Untitled sermon</span>
+                    )}
+                  </h1>
+                  {sermon.is_eulogy && (
+                    <span className="px-2 py-0.5 text-[10px] uppercase tracking-wide rounded bg-gray-200 text-gray-700">
+                      Eulogy
+                    </span>
+                  )}
+                </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
                   {sermon.scripture_reference && (
                     <span>{sermon.scripture_reference}</span>
@@ -237,8 +328,31 @@ export default function SermonDetail() {
                   {sermon.theme && (
                     <span className="italic">{sermon.theme}</span>
                   )}
+                  {sermon.lectionary_year && (
+                    <span className="text-gray-500">
+                      Year: {sermon.lectionary_year}
+                    </span>
+                  )}
                   {sermon.preached_at && (
-                    <span>{fmtDate(sermon.preached_at)}</span>
+                    <span>First preached {fmtDate(sermon.preached_at)}</span>
+                  )}
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-gray-500">
+                  {sermon.strength != null && (
+                    <span>
+                      Strength:{' '}
+                      <span className="font-medium text-umc-900">
+                        {sermon.strength}/10
+                      </span>
+                    </span>
+                  )}
+                  {sermon.timeless && (
+                    <span>
+                      Timeless?{' '}
+                      <span className="font-medium text-gray-700">
+                        {sermon.timeless}
+                      </span>
+                    </span>
                   )}
                 </div>
               </div>
@@ -250,6 +364,16 @@ export default function SermonDetail() {
                 Edit metadata
               </button>
             </div>
+            {sermon.major_stories && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
+                  Major stories / illustrations
+                </p>
+                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                  {sermon.major_stories}
+                </p>
+              </div>
+            )}
             {sermon.notes && (
               <div className="mt-4 pt-4 border-t border-gray-100">
                 <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">
@@ -264,32 +388,58 @@ export default function SermonDetail() {
         )}
       </div>
 
-      {/* Where preached */}
+      {/* Preachings */}
       {preachedAt.length > 0 && (
         <div className="card">
-          <h2 className="font-serif text-lg text-umc-900">Preached at</h2>
-          <ul className="mt-2 space-y-1 text-sm">
-            {preachedAt.map((b) => (
+          <h2 className="font-serif text-lg text-umc-900">
+            Preached
+            <span className="ml-2 text-sm font-normal text-gray-500">
+              ({preachedAt.length} time{preachedAt.length === 1 ? '' : 's'})
+            </span>
+          </h2>
+          <ul className="mt-2 divide-y divide-gray-100 text-sm">
+            {preachedAt.map((p) => (
               <li
-                key={b.id}
-                className="flex items-center justify-between text-gray-700"
+                key={p.id}
+                className="py-2 flex items-start justify-between gap-3"
               >
-                <span>{fmtDate(b.service_date)}</span>
-                <span className="text-xs text-gray-500">
-                  {b.sunday_designation || ''}{' '}
-                  {b.status !== 'published' && (
-                    <span className="ml-1 px-1 py-0.5 text-[10px] uppercase tracking-wide rounded bg-gray-100 text-gray-500">
-                      {b.status}
-                    </span>
+                <div className="min-w-0">
+                  <div className="text-gray-700">
+                    {p.preached_at ? (
+                      fmtDate(p.preached_at)
+                    ) : (
+                      <span className="italic text-gray-400">
+                        Date unknown
+                      </span>
+                    )}
+                    {p.location && (
+                      <span className="text-gray-500 ml-2">— {p.location}</span>
+                    )}
+                  </div>
+                  {p.title_used && p.title_used !== sermon.title && (
+                    <div className="text-xs text-gray-500 italic mt-0.5">
+                      Titled: "{p.title_used}"
+                    </div>
                   )}
-                </span>
+                  {p.series && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      Series: {p.series}
+                    </div>
+                  )}
+                  {p.bulletin && (
+                    <div className="text-xs text-gray-400 mt-0.5">
+                      In bulletin: {p.bulletin.sunday_designation || ''}
+                      {p.bulletin.status !== 'published' && (
+                        <span className="ml-1 px-1 py-0.5 text-[10px] uppercase tracking-wide rounded bg-gray-100 text-gray-500">
+                          {p.bulletin.status}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
-          <p className="text-xs text-gray-400 mt-3">
-            A sermon can be preached more than once — re-using the same
-            sermon_id at a future church links it back here.
-          </p>
         </div>
       )}
 

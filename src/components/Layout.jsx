@@ -20,6 +20,12 @@ export default function Layout() {
           </Link>
           {session && (
             <div className="flex items-center gap-3 sm:gap-4 text-sm">
+              <Link
+                to="/import"
+                className="text-umc-100 hover:text-white underline whitespace-nowrap"
+              >
+                Import
+              </Link>
               <span className="text-umc-100 hidden sm:inline">
                 {profile?.full_name}
               </span>

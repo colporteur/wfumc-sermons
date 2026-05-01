@@ -121,11 +121,23 @@ export default function SermonList() {
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
-                    <h2 className="font-serif text-lg text-umc-900 truncate">
-                      {s.title || (
-                        <span className="italic text-gray-400">Untitled sermon</span>
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      {s.original_sermon_number && (
+                        <span className="text-xs text-gray-400 font-mono">
+                          #{s.original_sermon_number}
+                        </span>
                       )}
-                    </h2>
+                      <h2 className="font-serif text-lg text-umc-900 truncate">
+                        {s.title || (
+                          <span className="italic text-gray-400">Untitled sermon</span>
+                        )}
+                      </h2>
+                      {s.is_eulogy && (
+                        <span className="px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-gray-100 text-gray-600">
+                          Eulogy
+                        </span>
+                      )}
+                    </div>
                     <div className="text-sm text-gray-600 mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
                       {s.scripture_reference && (
                         <span>{s.scripture_reference}</span>
@@ -133,18 +145,32 @@ export default function SermonList() {
                       {s.theme && (
                         <span className="italic text-gray-500">{s.theme}</span>
                       )}
+                      {s.lectionary_year && (
+                        <span className="text-gray-500">
+                          {s.lectionary_year}
+                        </span>
+                      )}
                       {s.preached_at && (
                         <span className="text-gray-500">
                           {fmtDate(s.preached_at)}
                         </span>
                       )}
+                      {s.strength != null && (
+                        <span className="text-umc-700 font-medium">
+                          {s.strength}/10
+                        </span>
+                      )}
                     </div>
-                    {s.manuscript_text && (
+                    {s.manuscript_text ? (
                       <p className="text-xs text-gray-500 mt-2 line-clamp-2">
                         {s.manuscript_text.slice(0, 200)}
                         {s.manuscript_text.length > 200 ? '…' : ''}
                       </p>
-                    )}
+                    ) : s.major_stories ? (
+                      <p className="text-xs text-gray-500 mt-2 line-clamp-2">
+                        {s.major_stories}
+                      </p>
+                    ) : null}
                   </div>
                   <span className="text-gray-400 mt-1">→</span>
                 </div>
