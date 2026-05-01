@@ -1,5 +1,12 @@
 // Helpers for parsing scripture references like "John 3:16-21" or
 // "1 Corinthians 13:1-13; Mark 12:28-34" into the book name(s).
+//
+// Edge cases handled:
+//   - Continuations: "Genesis 2:15-17; 3:1-7" → only "Genesis"
+//     (the second chunk "3:1-7" inherits the previous chunk's book
+//     instead of being treated as a new citation).
+//   - Translation markers: "John 3:16 KJV" → only "John"
+//     (KJV / NRSV / NIV / etc. are not books).
 
 // Standard Protestant canon books, in roughly canonical order.
 // Used to map common variants ("1 Cor", "I Corinthians") back to a
@@ -48,8 +55,27 @@ const LOWER_BOOK_LOOKUP = (() => {
   return map;
 })();
 
+// Common Bible translation abbreviations. If the parser thinks a token
+// is a book but it's actually one of these, drop it.
+const TRANSLATIONS = new Set([
+  'KJV', 'NKJV', 'NIV', 'NIRV', 'TNIV',
+  'NRSV', 'NRSVUE', 'NRSVCE', 'RSV',
+  'ESV', 'NASB', 'NASB95', 'NASB20',
+  'CEB', 'CEV', 'GNT', 'GNB', 'TEV',
+  'MSG', 'NLT', 'TLB', 'WEB', 'BBE',
+  'AMP', 'AMPC', 'ASV', 'YLT', 'DRA',
+  'JB', 'NJB', 'NABRE', 'NAB',
+  'TPT', 'PHILLIPS', 'WYC', 'GW',
+]);
+
+function isTranslationToken(s) {
+  if (!s) return false;
+  return TRANSLATIONS.has(s.replace(/[\s()]+/g, '').toUpperCase());
+}
+
 // Parse a single citation chunk like "John 3:16-21" or "1 Corinthians 13"
-// → "John" or "1 Corinthians". Returns null if unrecognized.
+// → "John" or "1 Corinthians". Returns null if unrecognized OR if the
+// candidate looks like a translation marker rather than a book.
 export function bookFromCitation(citation) {
   if (!citation) return null;
   const trimmed = citation.trim();
@@ -58,9 +84,11 @@ export function bookFromCitation(citation) {
   // The book name is everything up to the first space-then-digit
   // sequence (allowing for the leading "1"/"2"/"3" or "I"/"II"/"III").
   const match = trimmed.match(/^([1-3IVi]?[Iv]*\s?[A-Za-z][A-Za-z'’]*(?:\s+(?:of\s+)?[A-Za-z][A-Za-z'’]*)*)\s+\d/);
-  const candidate = match ? match[1] : trimmed;
+  const candidate = (match ? match[1] : trimmed).trim();
+  if (!candidate) return null;
+  if (isTranslationToken(candidate)) return null;
   const lookup = LOWER_BOOK_LOOKUP.get(candidate.toLowerCase());
-  return lookup || candidate.trim() || null;
+  return lookup || candidate || null;
 }
 
 // Given a free-form scripture_reference (possibly multiple citations
@@ -73,9 +101,24 @@ export function booksFromReference(ref) {
     .map((s) => s.trim())
     .filter(Boolean);
   const out = new Set();
+  // Track the most recent book so chunks like "3:1-7" (a continuation
+  // of an earlier "Genesis 2:15-17") inherit it instead of being
+  // misread as a brand-new book.
+  let lastBook = null;
   for (const c of chunks) {
+    // Pure chapter:verse continuation — no letters at all (or only a
+    // translation marker hanging on). Inherit the previous book.
+    const hasLetters = /[A-Za-z]/.test(c);
+    const onlyTranslation = hasLetters && isTranslationToken(c);
+    if (!hasLetters || onlyTranslation) {
+      if (lastBook) out.add(lastBook);
+      continue;
+    }
     const b = bookFromCitation(c);
-    if (b) out.add(b);
+    if (b) {
+      out.add(b);
+      lastBook = b;
+    }
   }
   return Array.from(out);
 }
