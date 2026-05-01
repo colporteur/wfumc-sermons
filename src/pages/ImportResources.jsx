@@ -4,6 +4,10 @@ import { supabase, withTimeout } from '../lib/supabase';
 import { parseEnex } from '../lib/enex';
 import { classifyResources } from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
+import {
+  uploadResourceImage,
+  attachImageIfNew,
+} from '../lib/resourceImages';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 const TYPE_CHOICES = [
@@ -37,7 +41,13 @@ export default function ImportResources() {
   const [classifyMsg, setClassifyMsg] = useState(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
-  const [results, setResults] = useState({ inserted: 0, skipped: 0, errors: [] });
+  const [results, setResults] = useState({
+    inserted: 0,
+    skipped: 0,
+    imagesUploaded: 0,
+    imagesSkipped: 0,
+    errors: [],
+  });
 
   useEffect(() => {
     listMyLibraries()
@@ -127,54 +137,90 @@ export default function ImportResources() {
     const errors = [];
     let inserted = 0;
     let skipped = 0;
+    let imagesUploaded = 0;
+    let imagesSkipped = 0;
 
-    // Insert in chunks of 25 with a single upsert call per chunk.
-    const CHUNK = 25;
-    for (let i = 0; i < selected.length; i += CHUNK) {
-      const chunk = selected.slice(i, i + CHUNK);
-      const toInsert = chunk.map((n) => ({
-        owner_user_id: user.id,
-        library_id: libraryId || null,
-        resource_type: rows[n.hash]?.type || 'note',
-        title: n.title || null,
-        content: n.content || '',
-        source: null,
-        source_url: n.sourceUrl || null,
-        themes: n.tags ?? [],
-        scripture_refs: null,
-        tone: null,
-        notes: null,
-        external_source: EXTERNAL_SOURCE,
-        external_guid: n.hash,
-        original_created_at: n.createdAt || null,
-      }));
+    // Per-note loop — gives us the resource id back so we can attach
+    // images, and lets us report errors per note instead of per chunk.
+    for (let i = 0; i < selected.length; i++) {
+      const n = selected[i];
       try {
-        const { data, error: err } = await withTimeout(
+        const { data: created, error: err } = await withTimeout(
           supabase
             .from('resources')
-            .upsert(toInsert, {
-              onConflict: 'owner_user_id,external_source,external_guid',
-              ignoreDuplicates: false,
-            })
-            .select('id'),
-          60000
+            .upsert(
+              {
+                owner_user_id: user.id,
+                library_id: libraryId || null,
+                resource_type: rows[n.hash]?.type || 'note',
+                title: n.title || null,
+                content: n.content || '',
+                source: null,
+                source_url: n.sourceUrl || null,
+                themes: n.tags ?? [],
+                scripture_refs: null,
+                tone: null,
+                notes: null,
+                external_source: EXTERNAL_SOURCE,
+                external_guid: n.hash,
+                original_created_at: n.createdAt || null,
+              },
+              {
+                onConflict: 'owner_user_id,external_source,external_guid',
+                ignoreDuplicates: false,
+              }
+            )
+            .select('id')
+            .single(),
+          30000
         );
         if (err) throw err;
-        // Note: with onConflict + ignoreDuplicates:false we get rows back
-        // for both inserts and updates; we don't easily distinguish.
-        // Treat the count as "processed."
-        inserted += data?.length ?? chunk.length;
+        inserted += 1;
+
+        // Attach images. Each is dedupe-keyed by content_hash within the
+        // resource — re-running a .enex won't pile up duplicate images.
+        for (let j = 0; j < (n.images?.length ?? 0); j++) {
+          const img = n.images[j];
+          try {
+            // Wrap blob with name + type so storage helpers pick a sane
+            // extension & content type.
+            const file = new File(
+              [img.blob],
+              img.fileName || `image-${j}.${img.mime.split('/')[1] || 'bin'}`,
+              { type: img.mime }
+            );
+            const path = await uploadResourceImage({
+              file,
+              ownerUserId: user.id,
+              resourceId: created.id,
+            });
+            const result = await attachImageIfNew({
+              resourceId: created.id,
+              ownerUserId: user.id,
+              imagePath: path,
+              sortOrder: j,
+              contentHash: img.contentHash,
+            });
+            if (result.skipped) imagesSkipped += 1;
+            else imagesUploaded += 1;
+          } catch (imgErr) {
+            errors.push({
+              chunk: `${n.title || '(untitled)'} — image ${j + 1}`,
+              message: imgErr.message || String(imgErr),
+            });
+          }
+        }
       } catch (e) {
         errors.push({
-          chunk: `${i + 1}–${i + chunk.length}`,
+          chunk: `${n.title || '(untitled)'}`,
           message: e.message || String(e),
         });
-        skipped += chunk.length;
+        skipped += 1;
       }
-      setProgress({ done: Math.min(i + CHUNK, selected.length), total: selected.length });
+      setProgress({ done: i + 1, total: selected.length });
     }
 
-    setResults({ inserted, skipped, errors });
+    setResults({ inserted, skipped, imagesUploaded, imagesSkipped, errors });
     setImporting(false);
     setPhase('done');
   };
@@ -185,7 +231,13 @@ export default function ImportResources() {
     setRows({});
     setError(null);
     setProgress({ done: 0, total: 0 });
-    setResults({ inserted: 0, skipped: 0, errors: [] });
+    setResults({
+      inserted: 0,
+      skipped: 0,
+      imagesUploaded: 0,
+      imagesSkipped: 0,
+      errors: [],
+    });
   };
 
   return (
@@ -285,6 +337,20 @@ export default function ImportResources() {
             )}
             .
           </p>
+          {(results.imagesUploaded > 0 || results.imagesSkipped > 0) && (
+            <p className="text-sm text-gray-600">
+              Uploaded <strong>{results.imagesUploaded}</strong> images
+              {results.imagesSkipped > 0 && (
+                <>
+                  {' '}·{' '}
+                  <span className="text-gray-500">
+                    {results.imagesSkipped} already existed
+                  </span>
+                </>
+              )}
+              .
+            </p>
+          )}
           {results.errors.length > 0 && (
             <details className="text-xs text-gray-600">
               <summary className="cursor-pointer">Show errors</summary>
@@ -423,9 +489,9 @@ function PreviewStep({
                           (untitled)
                         </span>
                       )}
-                      {n.hasImages && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wide text-amber-700">
-                          had images (skipped)
+                      {n.images?.length > 0 && (
+                        <span className="ml-2 text-[10px] uppercase tracking-wide text-pink-700">
+                          {n.images.length} image{n.images.length === 1 ? '' : 's'}
                         </span>
                       )}
                     </div>

@@ -26,7 +26,13 @@
  *     sourceUrl: string | null,
  *     createdAt: string | null, // ISO 8601
  *     hash: string,             // stable dedupe key
- *     hasImages: boolean,       // for the preview UI
+ *     hasImages: boolean,       // true if any image resources found
+ *     images: Array<{
+ *       mime: string,
+ *       fileName: string | null,
+ *       blob: Blob,             // ready to upload to storage
+ *       contentHash: string,    // SHA-256 of bytes for dedupe
+ *     }>,
  *   }
  */
 export async function parseEnex(xmlText) {
@@ -62,7 +68,12 @@ export async function parseEnex(xmlText) {
     const sourceUrl = attrs ? textContent(attrs, 'source-url') : null;
 
     const rawContent = el.getElementsByTagName('content')[0]?.textContent ?? '';
-    const { text, hasImages } = enmlToPlainText(rawContent);
+    const { text, hasImages: contentMentionsImages } = enmlToPlainText(rawContent);
+
+    // Pull embedded image resources. ENEX puts them as <resource> children
+    // of <note> with base64 data + mime type.
+    const images = await extractImageResources(el);
+    const hasImages = images.length > 0 || contentMentionsImages;
 
     const hash = await stableHash(`${title}\n${created || ''}\n${text.slice(0, 200)}`);
 
@@ -74,9 +85,68 @@ export async function parseEnex(xmlText) {
       createdAt: created,
       hash,
       hasImages,
+      images,
     });
   }
   return out;
+}
+
+// Extract image attachments from a <note> element's <resource> children.
+// Each <resource> looks like:
+//   <resource>
+//     <data encoding="base64">....</data>
+//     <mime>image/jpeg</mime>
+//     <resource-attributes>
+//       <file-name>foo.jpg</file-name>
+//     </resource-attributes>
+//   </resource>
+// We skip non-image MIME types (PDFs, audio) — text-image-only first pass.
+async function extractImageResources(noteEl) {
+  const out = [];
+  const resourceEls = Array.from(noteEl.getElementsByTagName('resource'));
+  for (const r of resourceEls) {
+    const mime = textContent(r, 'mime') || '';
+    if (!mime.toLowerCase().startsWith('image/')) continue;
+    const dataEl = r.getElementsByTagName('data')[0];
+    if (!dataEl) continue;
+    // Strip whitespace/newlines from base64 (ENEX often line-wraps it).
+    const b64 = (dataEl.textContent || '').replace(/\s+/g, '');
+    if (!b64) continue;
+    let bytes;
+    try {
+      bytes = base64ToBytes(b64);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('Skipping image with bad base64:', e);
+      continue;
+    }
+    const attrs = r.getElementsByTagName('resource-attributes')[0];
+    const fileName = attrs ? textContent(attrs, 'file-name') : null;
+    const blob = new Blob([bytes], { type: mime });
+    const contentHash = await sha256Hex(bytes);
+    out.push({
+      mime,
+      fileName: fileName || null,
+      blob,
+      contentHash,
+    });
+  }
+  return out;
+}
+
+function base64ToBytes(b64) {
+  const bin = atob(b64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+async function sha256Hex(bytes) {
+  const buf = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
 }
 
 function textContent(parent, tagName) {

@@ -3,10 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { analyzeResource } from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
-import {
-  uploadResourceImage,
-  publicResourceImageUrl,
-} from '../lib/resourceImages';
+import { addImageToResource } from '../lib/resourceImages';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 const TYPE_CHOICES = [
@@ -50,10 +47,10 @@ export default function ResourceNew() {
   const [error, setError] = useState(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [analyzeError, setAnalyzeError] = useState(null);
-  // Photo upload state — file held in component state until save, then
-  // uploaded with the new resource id as the path prefix.
-  const [imageFile, setImageFile] = useState(null);
-  const [imagePreview, setImagePreview] = useState(null);
+  // Image files held in component state until save; uploaded after the
+  // resource row is created so we have a resource_id for path prefix.
+  const [imageFiles, setImageFiles] = useState([]);
+  const [imagePreviews, setImagePreviews] = useState([]);
   const fileInputRef = useRef(null);
 
   useEffect(() => {
@@ -62,33 +59,31 @@ export default function ResourceNew() {
       .catch(() => setLibraries([]));
   }, []);
 
-  // Whenever the user picks a file, generate a preview URL.
+  // Generate preview URLs for any picked files.
   useEffect(() => {
-    if (!imageFile) {
-      setImagePreview(null);
+    if (imageFiles.length === 0) {
+      setImagePreviews([]);
       return;
     }
-    const url = URL.createObjectURL(imageFile);
-    setImagePreview(url);
-    return () => URL.revokeObjectURL(url);
-  }, [imageFile]);
+    const urls = imageFiles.map((f) => URL.createObjectURL(f));
+    setImagePreviews(urls);
+    return () => urls.forEach((u) => URL.revokeObjectURL(u));
+  }, [imageFiles]);
 
   const set = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
   const handleImageChoose = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    if (!f.type.startsWith('image/')) {
-      setError('That file does not appear to be an image.');
-      return;
-    }
+    const fs = Array.from(e.target.files || []).filter((f) =>
+      f.type.startsWith('image/')
+    );
+    if (fs.length === 0) return;
     setError(null);
-    setImageFile(f);
+    setImageFiles((prev) => [...prev, ...fs]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const clearImage = () => {
-    setImageFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
+  const removeImageAt = (idx) => {
+    setImageFiles((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const runAnalyze = async () => {
@@ -130,8 +125,8 @@ export default function ResourceNew() {
       setError('Content is required.');
       return;
     }
-    if (isPhoto && !imageFile) {
-      setError('Pick a photo to upload.');
+    if (isPhoto && imageFiles.length === 0) {
+      setError('Photo resources need at least one image.');
       return;
     }
     setSaving(true);
@@ -141,7 +136,7 @@ export default function ResourceNew() {
         .split(',')
         .map((t) => t.trim().toLowerCase())
         .filter(Boolean);
-      // Step 1: insert the row (no image_path yet).
+      // Step 1: insert the resource row.
       const { data: created, error: err } = await withTimeout(
         supabase
           .from('resources')
@@ -150,7 +145,6 @@ export default function ResourceNew() {
             library_id: draft.library_id || null,
             resource_type: draft.resource_type,
             title: draft.title.trim() || null,
-            // For photos, allow empty content (it's just a caption).
             content: draft.content.trim() || (isPhoto ? '' : draft.content),
             source: draft.source.trim() || null,
             source_url: draft.source_url.trim() || null,
@@ -164,20 +158,14 @@ export default function ResourceNew() {
       );
       if (err) throw err;
 
-      // Step 2: if photo, upload image then patch image_path.
-      if (isPhoto && imageFile) {
-        const path = await uploadResourceImage({
-          file: imageFile,
+      // Step 2: upload any picked images and create resource_images rows.
+      for (let i = 0; i < imageFiles.length; i++) {
+        await addImageToResource({
+          file: imageFiles[i],
           ownerUserId: user.id,
           resourceId: created.id,
+          sortOrder: i,
         });
-        const { error: updateErr } = await withTimeout(
-          supabase
-            .from('resources')
-            .update({ image_path: path })
-            .eq('id', created.id)
-        );
-        if (updateErr) throw updateErr;
       }
 
       // Remember library choice for next time.
@@ -246,51 +234,57 @@ export default function ResourceNew() {
           </div>
         </div>
 
-        {/* Photo upload (only when type = photo) */}
-        {draft.resource_type === 'photo' && (
-          <div className="border border-dashed border-gray-300 rounded p-3 bg-gray-50 space-y-3">
-            <label className="label">Photo *</label>
-            {imagePreview ? (
-              <div className="space-y-2">
-                <img
-                  src={imagePreview}
-                  alt="preview"
-                  className="max-h-80 rounded border border-gray-200 bg-white"
-                />
-                <div className="flex gap-2">
-                  <label className="btn-secondary text-sm cursor-pointer">
-                    Choose different
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={handleImageChoose}
-                    />
-                  </label>
+        {/* Image attachments (any type can have them) */}
+        <div className="border border-dashed border-gray-300 rounded p-3 bg-gray-50 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <label className="label mb-0">
+              Images{' '}
+              {draft.resource_type === 'photo' && (
+                <span className="text-red-600">*</span>
+              )}
+            </label>
+            <label className="btn-secondary text-sm cursor-pointer">
+              + Add image(s)
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleImageChoose}
+              />
+            </label>
+          </div>
+          {imageFiles.length === 0 ? (
+            <p className="text-xs text-gray-500">
+              {draft.resource_type === 'photo'
+                ? 'A photo resource needs at least one image.'
+                : 'Optional. Attach scanned pages, diagrams, or supporting photos.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {imagePreviews.map((url, i) => (
+                <div
+                  key={i}
+                  className="relative border border-gray-200 rounded overflow-hidden bg-white"
+                >
+                  <img
+                    src={url}
+                    alt={`preview ${i + 1}`}
+                    className="w-full aspect-square object-cover"
+                  />
                   <button
                     type="button"
-                    onClick={clearImage}
-                    className="text-sm text-red-600 hover:text-red-800 underline"
+                    onClick={() => removeImageAt(i)}
+                    className="absolute top-1 right-1 px-2 py-0.5 text-xs bg-white/90 hover:bg-white text-red-600 hover:text-red-800 rounded shadow"
                   >
-                    Remove
+                    ✕
                   </button>
                 </div>
-              </div>
-            ) : (
-              <label className="btn-secondary text-sm cursor-pointer inline-block">
-                📷 Choose a photo
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleImageChoose}
-                />
-              </label>
-            )}
-          </div>
-        )}
+              ))}
+            </div>
+          )}
+        </div>
 
         <div>
           <label className="label">

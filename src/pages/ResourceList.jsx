@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { listMyLibraries } from '../lib/libraries';
+import { publicResourceImageUrl } from '../lib/resourceImages';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -24,12 +25,6 @@ const TYPE_BADGE = {
   photo: { label: 'Photo', cls: 'bg-pink-100 text-pink-800' },
 };
 
-// Public URL for an image stored in the resource-images bucket.
-const RESOURCE_BUCKET = 'resource-images';
-function publicImageUrl(path) {
-  if (!path) return null;
-  return supabase.storage.from(RESOURCE_BUCKET).getPublicUrl(path).data.publicUrl;
-}
 
 const SORT_OPTIONS = [
   { value: 'created_desc', label: 'Newest first' },
@@ -52,11 +47,69 @@ export default function ResourceList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [resources, setResources] = useState([]);
+  // Map of resource_id → first image_path (for thumbnails). We fetch
+  // resource_images separately, taking the lowest sort_order per resource.
+  const [thumbsByResource, setThumbsByResource] = useState({});
   const [libraries, setLibraries] = useState([]);
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  // Selection state for bulk actions (move-to-library)
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkLibraryId, setBulkLibraryId] = useState('');
+  const [bulkMoving, setBulkMoving] = useState(false);
+  const [bulkError, setBulkError] = useState(null);
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedIds(new Set());
 
   const updateFilter = (key, value) =>
     setFilters((f) => ({ ...f, [key]: value }));
+
+  const runBulkMove = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const targetLibraryId = bulkLibraryId || null;
+    const targetLabel = targetLibraryId
+      ? libraries.find((l) => l.id === targetLibraryId)?.name || 'that library'
+      : 'private (just you)';
+    if (
+      !window.confirm(
+        `Move ${ids.length} resource${ids.length === 1 ? '' : 's'} to ${targetLabel}?`
+      )
+    ) {
+      return;
+    }
+    setBulkMoving(true);
+    setBulkError(null);
+    try {
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('resources')
+          .update({ library_id: targetLibraryId })
+          .in('id', ids)
+          .select('id, library_id'),
+        30000
+      );
+      if (err) throw err;
+      const updatedIds = new Set((data ?? []).map((r) => r.id));
+      setResources((prev) =>
+        prev.map((r) =>
+          updatedIds.has(r.id) ? { ...r, library_id: targetLibraryId } : r
+        )
+      );
+      clearSelection();
+    } catch (e) {
+      setBulkError(e.message || String(e));
+    } finally {
+      setBulkMoving(false);
+    }
+  };
 
   useEffect(() => {
     if (!user?.id) return;
@@ -68,18 +121,35 @@ export default function ResourceList() {
         // No owner filter — RLS returns rows you own AND rows in libraries
         // you're a member of. The pooled-library design means co-members
         // see each other's contributions.
-        const [resRes, libsResult] = await Promise.all([
+        const [resRes, imgRes, libsResult] = await Promise.all([
           withTimeout(
             supabase
               .from('resources')
               .select('*')
               .order('created_at', { ascending: false })
           ),
+          // Pull every image visible to us; we'll pick the first per
+          // resource for thumbnails. RLS limits this to images of
+          // resources we can see.
+          withTimeout(
+            supabase
+              .from('resource_images')
+              .select('resource_id, image_path, sort_order, created_at')
+              .order('sort_order', { ascending: true })
+              .order('created_at', { ascending: true })
+          ),
           listMyLibraries().catch(() => []),
         ]);
         if (resRes.error) throw resRes.error;
+        if (imgRes.error) throw imgRes.error;
         if (cancelled) return;
         setResources(resRes.data ?? []);
+        // First image per resource (data is already sorted).
+        const thumbs = {};
+        for (const img of imgRes.data ?? []) {
+          if (!thumbs[img.resource_id]) thumbs[img.resource_id] = img.image_path;
+        }
+        setThumbsByResource(thumbs);
         setLibraries(libsResult);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
@@ -300,15 +370,32 @@ export default function ResourceList() {
             const badge = TYPE_BADGE[r.resource_type] ?? TYPE_BADGE.note;
             const lib = libraries.find((l) => l.id === r.library_id);
             const isMine = r.owner_user_id === user?.id;
-            const thumbUrl =
-              r.resource_type === 'photo' && r.image_path
-                ? publicImageUrl(r.image_path)
-                : null;
+            // Show thumbnail for any resource that has at least one image,
+            // not just photo type.
+            const thumbUrl = thumbsByResource[r.id]
+              ? publicResourceImageUrl(thumbsByResource[r.id])
+              : null;
+            const checked = selectedIds.has(r.id);
             return (
-              <li key={r.id}>
+              <li key={r.id} className="relative">
+                {/* Checkbox sits outside the Link so clicking it doesn't
+                    navigate. Stacked at the corner of the card. */}
+                <label
+                  className="absolute top-3 left-3 z-10 cursor-pointer p-1"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggleSelected(r.id)}
+                    className="h-4 w-4 rounded border-gray-300 text-umc-700"
+                  />
+                </label>
                 <Link
                   to={`/resources/${r.id}`}
-                  className="card block hover:border-umc-700 transition-colors"
+                  className={`card block pl-12 hover:border-umc-700 transition-colors ${
+                    checked ? 'border-umc-700 bg-umc-50/30' : ''
+                  }`}
                 >
                   <div className="flex items-start gap-3">
                     {thumbUrl && (
@@ -379,6 +466,53 @@ export default function ResourceList() {
             );
           })}
         </ul>
+      )}
+
+      {/* Floating bulk-action bar — appears when at least one resource
+          is selected. Lets the pastor move many resources to a library
+          (or back to private) in one shot. */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-4 inset-x-4 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-2xl z-20 card shadow-xl bg-white border-umc-700">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="text-sm font-medium text-umc-900">
+              {selectedIds.size} selected
+            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                className="input text-sm py-1"
+                value={bulkLibraryId}
+                onChange={(e) => setBulkLibraryId(e.target.value)}
+                disabled={bulkMoving}
+              >
+                <option value="">Move to: Just me (private)</option>
+                {libraries.map((lib) => (
+                  <option key={lib.id} value={lib.id}>
+                    Move to: {lib.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={runBulkMove}
+                disabled={bulkMoving}
+                className="btn-primary text-sm disabled:opacity-50"
+              >
+                {bulkMoving ? 'Moving…' : 'Apply'}
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                disabled={bulkMoving}
+                className="btn-secondary text-sm"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+          {bulkError && (
+            <p className="text-sm text-red-600 mt-2">{bulkError}</p>
+          )}
+        </div>
       )}
     </div>
   );
