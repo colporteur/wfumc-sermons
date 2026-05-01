@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
   if (!yyyymmdd) return '';
@@ -14,6 +15,7 @@ function fmtDate(yyyymmdd) {
 }
 
 export default function SermonDetail() {
+  const { user } = useAuth();
   const { id } = useParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -36,6 +38,7 @@ export default function SermonDetail() {
   });
 
   useEffect(() => {
+    if (!user?.id) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -43,7 +46,12 @@ export default function SermonDetail() {
       try {
         const [sermonRes, preachingsRes] = await Promise.all([
           withTimeout(
-            supabase.from('sermons').select('*').eq('id', id).maybeSingle()
+            supabase
+              .from('sermons')
+              .select('*')
+              .eq('id', id)
+              .eq('owner_user_id', user.id)
+              .maybeSingle()
           ),
           withTimeout(
             supabase
@@ -52,6 +60,7 @@ export default function SermonDetail() {
                 '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
               )
               .eq('sermon_id', id)
+              .eq('owner_user_id', user.id)
               .order('preached_at', { ascending: false, nullsFirst: false })
           ),
         ]);
@@ -69,7 +78,7 @@ export default function SermonDetail() {
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [id, user?.id]);
 
   const startEdit = () => {
     if (!sermon) return;
