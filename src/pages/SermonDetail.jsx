@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
@@ -444,23 +444,179 @@ export default function SermonDetail() {
       )}
 
       {/* Manuscript */}
-      <div className="card">
+      <ManuscriptCard sermon={sermon} setSermon={setSermon} />
+    </div>
+  );
+}
+
+// Inline manuscript editor — read view with "Edit" toggle, edit view
+// with textarea + DOCX upload, save persists to sermons.manuscript_text.
+function ManuscriptCard({ sermon, setSermon }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(sermon.manuscript_text ?? '');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploadNote, setUploadNote] = useState(null);
+  const docInputRef = useRef(null);
+
+  const startEdit = () => {
+    setDraft(sermon.manuscript_text ?? '');
+    setEditing(true);
+    setSaveError(null);
+    setUploadError(null);
+    setUploadNote(null);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setUploadError(null);
+    setUploadNote(null);
+  };
+
+  const handleManuscriptUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const isDocx =
+      file.name.toLowerCase().endsWith('.docx') ||
+      file.type ===
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    if (!isDocx) {
+      setUploadError(
+        'Please upload a .docx file (Microsoft Word). PDF support is coming later.'
+      );
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    setUploadNote(null);
+    try {
+      const mammoth =
+        (await import('mammoth')).default ?? (await import('mammoth'));
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      const text = (result?.value ?? '').trim();
+      if (!text) {
+        setUploadError(
+          "Couldn't extract any text from that document. It might be empty or image-only."
+        );
+        return;
+      }
+      setDraft(text);
+      const wordCount = text.split(/\s+/).filter(Boolean).length;
+      setUploadNote(
+        `Loaded ${wordCount.toLocaleString()} words from ${file.name}. Click "Save" to attach it.`
+      );
+    } catch (err) {
+      setUploadError(err?.message || 'Failed to parse document.');
+    } finally {
+      setUploading(false);
+      if (docInputRef.current) docInputRef.current.value = '';
+    }
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermons')
+          .update({ manuscript_text: draft.trim() || null })
+          .eq('id', sermon.id)
+          .select()
+          .single()
+      );
+      if (err) throw err;
+      setSermon(data);
+      setEditing(false);
+    } catch (err) {
+      setSaveError(err.message || String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="card">
+      <div className="flex items-center justify-between">
         <h2 className="font-serif text-lg text-umc-900">Manuscript</h2>
-        {sermon.manuscript_text ? (
-          <p className="mt-3 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
-            {sermon.manuscript_text}
-          </p>
-        ) : (
-          <p className="mt-3 text-sm text-gray-400 italic">
-            No manuscript text saved for this sermon.
-          </p>
+        {!editing && (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="btn-secondary text-sm"
+          >
+            {sermon.manuscript_text ? 'Edit manuscript' : '+ Add manuscript'}
+          </button>
         )}
-        <p className="text-xs text-gray-400 mt-4 pt-3 border-t border-gray-100">
-          The manuscript text is canonical and lives with the original
-          bulletin entry — edit it from the bulletin app's Order of Worship,
-          not here.
-        </p>
       </div>
+
+      {editing ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex justify-end">
+            <label
+              className={`text-xs cursor-pointer text-umc-700 hover:text-umc-900 underline ${
+                uploading ? 'opacity-50 pointer-events-none' : ''
+              }`}
+            >
+              {uploading ? 'Reading…' : '📄 Upload Word doc (.docx)'}
+              <input
+                ref={docInputRef}
+                type="file"
+                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="hidden"
+                onChange={handleManuscriptUpload}
+                disabled={uploading}
+              />
+            </label>
+          </div>
+          <textarea
+            className="input min-h-[300px] font-mono text-sm"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Paste the manuscript text here, or upload a .docx file above."
+          />
+          {uploadError && (
+            <p className="text-xs text-red-600">{uploadError}</p>
+          )}
+          {uploadNote && !uploadError && (
+            <p className="text-xs text-umc-700">{uploadNote}</p>
+          )}
+          {saveError && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+              {saveError}
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="btn-primary disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save manuscript'}
+            </button>
+            <button
+              type="button"
+              onClick={cancelEdit}
+              className="btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : sermon.manuscript_text ? (
+        <p className="mt-3 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
+          {sermon.manuscript_text}
+        </p>
+      ) : (
+        <p className="mt-3 text-sm text-gray-400 italic">
+          No manuscript text saved for this sermon. Click "+ Add manuscript"
+          above to upload a Word doc or paste the text.
+        </p>
+      )}
     </div>
   );
 }
