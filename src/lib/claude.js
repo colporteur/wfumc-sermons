@@ -67,6 +67,23 @@ function parseJsonLoose(text) {
 }
 
 /**
+ * Same idea, but for top-level JSON arrays.
+ */
+function parseJsonArrayLoose(text) {
+  if (!text) return null;
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenceMatch ? fenceMatch[1] : text;
+  const start = candidate.indexOf('[');
+  const end = candidate.lastIndexOf(']');
+  if (start === -1 || end === -1 || end < start) return null;
+  try {
+    return JSON.parse(candidate.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Analyze a sermon-prep resource (story / quote / illustration / joke /
  * note) and suggest themes, scripture connections, and tone.
  *
@@ -126,4 +143,72 @@ export async function analyzeResource({ content, type, title, source }) {
       typeof parsed.scripture_refs === 'string' ? parsed.scripture_refs.trim() : '',
     tone: typeof parsed.tone === 'string' ? parsed.tone.trim() : '',
   };
+}
+
+/**
+ * Classify a batch of imported notes into resource types.
+ *
+ * @param {Array<{ id: string, title?: string, snippet: string }>} items
+ * @returns {Promise<Record<string, 'story'|'quote'|'illustration'|'joke'|'note'|'photo'>>}
+ *   Map of input id → suggested type. Items Claude can't classify
+ *   default to 'note'.
+ */
+export async function classifyResources(items) {
+  if (!items?.length) return {};
+  const VALID = new Set([
+    'story', 'quote', 'illustration', 'joke', 'note', 'photo',
+  ]);
+  const out = {};
+
+  // Batch in groups of 20 to keep prompts small and responses parseable.
+  const BATCH = 20;
+  for (let i = 0; i < items.length; i += BATCH) {
+    const batch = items.slice(i, i + BATCH);
+    const system = [
+      'You categorize sermon-prep notes into one of:',
+      '  story         — a narrative anecdote (personal or 3rd-person)',
+      '  quote         — a short attributed saying or excerpt',
+      '  illustration  — a metaphor or analogy used to teach',
+      '  joke          — humor, intentionally light',
+      '  note          — generic notes, ideas, observations',
+      '  photo         — describes a visual reference',
+      '',
+      'Return ONLY a JSON array of objects: [{"id": "<the id>", "type": "<one of the above>"}, ...]',
+      'Use the exact ids you receive. No explanation, no prose.',
+    ].join('\n');
+    const lines = batch.map(
+      (it) =>
+        `id=${it.id}\ntitle: ${it.title || '(untitled)'}\nsnippet: ${(
+          it.snippet || ''
+        ).slice(0, 200).replace(/\s+/g, ' ')}`
+    );
+    const user = `Classify these ${batch.length} items:\n\n${lines.join('\n---\n')}`;
+
+    let parsed = null;
+    try {
+      const response = await callClaude({
+        system,
+        messages: [{ role: 'user', content: user }],
+        max_tokens: 1500,
+      });
+      const text = extractText(response);
+      parsed = parseJsonArrayLoose(text);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.warn('classify batch failed, defaulting to note:', e);
+    }
+    if (Array.isArray(parsed)) {
+      for (const row of parsed) {
+        if (row && typeof row.id === 'string' && typeof row.type === 'string') {
+          const t = row.type.trim().toLowerCase();
+          if (VALID.has(t)) out[row.id] = t;
+        }
+      }
+    }
+    // Anything Claude missed → default to 'note'
+    for (const it of batch) {
+      if (!out[it.id]) out[it.id] = 'note';
+    }
+  }
+  return out;
 }

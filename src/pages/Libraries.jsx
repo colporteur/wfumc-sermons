@@ -75,20 +75,21 @@ export default function Libraries() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="font-serif text-2xl text-umc-900">Libraries</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            Shared collections of resources. Members of a library can see and
-            edit every resource in it.
-          </p>
-        </div>
-        <Link
-          to="/resources"
-          className="text-sm text-gray-500 hover:text-gray-700 underline"
-        >
-          ← Back to resources
+      <div className="flex items-center gap-3 text-sm">
+        <Link to="/" className="text-gray-500 hover:text-gray-700">
+          ← Sermon archive
         </Link>
+        <span className="text-gray-300">·</span>
+        <Link to="/resources" className="text-gray-500 hover:text-gray-700">
+          Resources
+        </Link>
+      </div>
+      <div>
+        <h1 className="font-serif text-2xl text-umc-900">Libraries</h1>
+        <p className="text-sm text-gray-500 mt-0.5">
+          Shared collections of resources. Members of a library can see and
+          edit every resource in it.
+        </p>
       </div>
 
       {error && (

@@ -10,6 +10,7 @@ import ResourceList from './pages/ResourceList.jsx';
 import ResourceNew from './pages/ResourceNew.jsx';
 import ResourceDetail from './pages/ResourceDetail.jsx';
 import Libraries from './pages/Libraries.jsx';
+import ImportResources from './pages/ImportResources.jsx';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/resources/new" element={<ResourceNew />} />
         <Route path="/resources/:id" element={<ResourceDetail />} />
         <Route path="/libraries" element={<Libraries />} />
+        <Route path="/import-resources" element={<ImportResources />} />
         <Route path="/import" element={<Import />} />
       </Route>
       <Route path="*" element={<NotFound />} />

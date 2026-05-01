@@ -153,6 +153,12 @@ export default function ResourceList() {
 
   return (
     <div className="space-y-4">
+      <Link
+        to="/"
+        className="inline-block text-sm text-gray-500 hover:text-gray-700"
+      >
+        ← Sermon archive
+      </Link>
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="font-serif text-2xl text-umc-900">Resources</h1>
@@ -160,7 +166,13 @@ export default function ResourceList() {
             Stories, quotes, illustrations, photos, and notes for sermon prep.
           </p>
         </div>
-        <div className="flex gap-2 items-center">
+        <div className="flex gap-3 items-center">
+          <Link
+            to="/import-resources"
+            className="text-sm text-gray-500 hover:text-gray-700 underline whitespace-nowrap"
+          >
+            Import from Evernote
+          </Link>
           <Link
             to="/libraries"
             className="text-sm text-gray-500 hover:text-gray-700 underline whitespace-nowrap"
