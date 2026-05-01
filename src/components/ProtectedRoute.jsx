@@ -2,8 +2,11 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import LoadingSpinner from './LoadingSpinner.jsx';
 
+// Sermon Archive is multi-tenant. Any authenticated user can access; RLS
+// scopes their data to sermons they own. Staff users (e.g., WFUMC admin)
+// can also see all sermons across users (for guest preacher workflows).
 export default function ProtectedRoute({ children }) {
-  const { loading, session, isStaff } = useAuth();
+  const { loading, session } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -12,25 +15,6 @@ export default function ProtectedRoute({ children }) {
 
   if (!session) {
     return <Navigate to="/login" state={{ from: location }} replace />;
-  }
-
-  if (!isStaff) {
-    return (
-      <div className="max-w-lg mx-auto mt-12 p-6 text-center space-y-4">
-        <h1 className="text-xl font-semibold">No staff profile</h1>
-        <p className="text-gray-600 text-sm">
-          You're signed in, but no staff profile is loaded for this user.
-          The Sermon Archive is restricted to church staff.
-        </p>
-        <button
-          type="button"
-          onClick={() => window.location.reload()}
-          className="btn-primary"
-        >
-          Reload
-        </button>
-      </div>
-    );
   }
 
   return children;

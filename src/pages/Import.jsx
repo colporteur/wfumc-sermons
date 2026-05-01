@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { supabase, withTimeout } from '../lib/supabase';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // =====================================================================
 // Sermon Database XLSX import
@@ -140,6 +141,7 @@ function parseYearly(rows) {
 }
 
 export default function Import() {
+  const { user } = useAuth();
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState(null);
   const [preview, setPreview] = useState(null);
@@ -209,11 +211,17 @@ export default function Import() {
     setDone(false);
 
     try {
-      // Step 1: UPSERT all sermons by original_sermon_number
+      if (!user?.id) {
+        throw new Error('Not signed in. Please log in first.');
+      }
+      // Step 1: UPSERT all sermons by original_sermon_number, stamping
+      // ownership with the current user.
       log(`Upserting ${preview.sermons.length} sermons…`);
       const SERMON_BATCH = 50;
       for (let i = 0; i < preview.sermons.length; i += SERMON_BATCH) {
-        const batch = preview.sermons.slice(i, i + SERMON_BATCH);
+        const batch = preview.sermons
+          .slice(i, i + SERMON_BATCH)
+          .map((s) => ({ ...s, owner_user_id: user.id }));
         const { error: err } = await withTimeout(
           supabase
             .from('sermons')
@@ -253,6 +261,7 @@ export default function Import() {
           location: p.location,
           title_used: p.title_used,
           series: p.series,
+          owner_user_id: user.id,
         });
       }
       if (unmatched > 0) {

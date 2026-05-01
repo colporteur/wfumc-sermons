@@ -81,13 +81,16 @@ export default function SermonList() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-serif text-umc-900">Sermon Archive</h1>
-        <p className="text-sm text-gray-600 mt-1">
-          Every sermon you've preached, indexed and searchable. Sermons are
-          created automatically when you fill in a sermon item in the
-          bulletin app.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-serif text-umc-900">Sermon Archive</h1>
+          <p className="text-sm text-gray-600 mt-1">
+            Every sermon you've preached, indexed and searchable.
+          </p>
+        </div>
+        <Link to="/sermons/new" className="btn-primary whitespace-nowrap">
+          + New sermon
+        </Link>
       </div>
 
       <div className="card">
