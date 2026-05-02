@@ -6,6 +6,8 @@
 // never leaves the server.
 
 import { supabase, withTimeout } from './supabase';
+import { prepareImageForUpload, blobToBase64 } from './imageHelpers';
+import { publicResourceImageUrl } from './resourceImages';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 
@@ -163,6 +165,162 @@ export async function analyzeResource({ content, type, title, source }) {
     themes,
     scripture_refs:
       typeof parsed.scripture_refs === 'string' ? parsed.scripture_refs.trim() : '',
+    tone: typeof parsed.tone === 'string' ? parsed.tone.trim() : '',
+  };
+}
+
+/**
+ * Analyze a resource that has one or more images. Uses Claude vision —
+ * fetches each image, downsizes + re-encodes as JPEG, sends as base64
+ * alongside any existing text context. Returns suggestions for every
+ * field (title, content/narrative, themes, scripture, tone) so the UI
+ * can decide whether to overwrite existing values or only fill blanks.
+ *
+ * @param {Object} input
+ * @param {Array<{ image_path: string, caption?: string }>} input.images
+ * @param {Object} [input.existing]  Current resource fields, used for context
+ *   (Claude can still suggest replacements; the UI decides what to apply).
+ * @returns {Promise<{
+ *   title: string,
+ *   content: string,
+ *   themes: string[],
+ *   scripture_refs: string,
+ *   tone: string,
+ * }>}
+ */
+export async function analyzeResourceWithImages({ images, existing = {} }) {
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new Error('No images attached to analyze.');
+  }
+  // Cap to 4 images to keep token use sane (Claude vision per-image cost).
+  const subset = images.slice(0, 4);
+
+  // Fetch + downsize + base64-encode each image in parallel.
+  const prepared = await Promise.all(
+    subset.map(async (img) => {
+      const url = publicResourceImageUrl(img.image_path);
+      // Fetch as blob so we can pipe through prepareImageForUpload (which
+      // re-encodes to JPEG — Anthropic's vision endpoint requires
+      // JPEG/PNG/GIF/WEBP and a clean encoding).
+      const res = await withTimeout(fetch(url), 30000);
+      if (!res.ok) {
+        throw new Error(`Couldn't fetch image (${res.status})`);
+      }
+      const blob = await res.blob();
+      const { blob: jpeg, mediaType } = await prepareImageForUpload(
+        blob,
+        1600,
+        0.85
+      );
+      const data = await blobToBase64(jpeg);
+      return { mediaType, data, caption: img.caption };
+    })
+  );
+
+  const system = [
+    'You help a United Methodist pastor (who preaches the Revised Common',
+    "Lectionary) catalog visual resources in their sermon-prep library.",
+    '',
+    "Look at the attached image(s) and propose a complete set of",
+    'metadata for the resource. Return ONLY a JSON object with these keys:',
+    '  title:          a concrete 4-8 word title',
+    '  content:        a short narrative description (2-4 sentences) of',
+    '                  what the image shows AND how it could be used in',
+    '                  preaching (its preachable angle). NOT just a',
+    '                  description — include the homiletical hook.',
+    '  themes:         array of 3-6 short lowercase theme tags',
+    '  scripture_refs: relevant Bible references, semicolon-separated.',
+    '                  Prefer Revised Common Lectionary passages where they',
+    '                  fit. Empty string is fine if nothing connects.',
+    '  tone:           one short descriptor (tender, hopeful, convicting,',
+    '                  somber, humorous, etc.)',
+    '',
+    "If the user has already filled in some fields (shown below as context),",
+    "still propose your best suggestions for ALL fields. The UI will let",
+    "the user choose whether to overwrite or only fill blanks.",
+    'No explanation, no prose — just the JSON object.',
+  ].join('\n');
+
+  // Build a text block summarizing whatever the user has so far.
+  const ctxLines = [];
+  if (existing.title) ctxLines.push(`Current title: ${existing.title}`);
+  if (existing.content)
+    ctxLines.push(`Current content:\n${existing.content}`);
+  if (existing.source) ctxLines.push(`Source: ${existing.source}`);
+  if (existing.themes?.length)
+    ctxLines.push(`Current themes: ${existing.themes.join(', ')}`);
+  if (existing.scripture_refs)
+    ctxLines.push(`Current scripture: ${existing.scripture_refs}`);
+  if (existing.tone) ctxLines.push(`Current tone: ${existing.tone}`);
+  if (existing.resource_type)
+    ctxLines.push(`Resource type: ${existing.resource_type}`);
+  const ctxBlock =
+    ctxLines.length > 0
+      ? `Context (what the user has filled in so far):\n${ctxLines.join(
+          '\n'
+        )}\n\n`
+      : '';
+
+  // Compose the multimodal user message: text intro + each image + a
+  // closing instruction.
+  const contentBlocks = [
+    {
+      type: 'text',
+      text:
+        ctxBlock +
+        `Here ${subset.length === 1 ? 'is the image' : `are ${subset.length} images`} attached to this resource:`,
+    },
+  ];
+  for (let i = 0; i < prepared.length; i++) {
+    const p = prepared[i];
+    if (p.caption) {
+      contentBlocks.push({
+        type: 'text',
+        text: `Image ${i + 1} caption: ${p.caption}`,
+      });
+    }
+    contentBlocks.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: p.mediaType,
+        data: p.data,
+      },
+    });
+  }
+  contentBlocks.push({
+    type: 'text',
+    text:
+      'Now return the JSON object with title, content, themes, ' +
+      'scripture_refs, and tone.',
+  });
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: contentBlocks }],
+      max_tokens: 1500,
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonLoose(text);
+  if (!parsed) {
+    throw new Error("Couldn't parse Claude's response as JSON.");
+  }
+  const themes = Array.isArray(parsed.themes)
+    ? parsed.themes
+        .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+        .filter(Boolean)
+    : [];
+  return {
+    title: typeof parsed.title === 'string' ? parsed.title.trim() : '',
+    content: typeof parsed.content === 'string' ? parsed.content.trim() : '',
+    themes,
+    scripture_refs:
+      typeof parsed.scripture_refs === 'string'
+        ? parsed.scripture_refs.trim()
+        : '',
     tone: typeof parsed.tone === 'string' ? parsed.tone.trim() : '',
   };
 }

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
-import { analyzeResource } from '../lib/claude';
+import { analyzeResource, analyzeResourceWithImages } from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
 import {
   publicResourceImageUrl,
@@ -53,6 +53,12 @@ export default function ResourceDetail() {
   const [imageError, setImageError] = useState(null);
   const [removingImageId, setRemovingImageId] = useState(null);
   const fileInputRef = useRef(null);
+  // Vision analyze state
+  const [visionRunning, setVisionRunning] = useState(false);
+  const [visionError, setVisionError] = useState(null);
+  const [visionSuggestions, setVisionSuggestions] = useState(null);
+  const [visionOverwrite, setVisionOverwrite] = useState(false);
+  const [visionApplying, setVisionApplying] = useState(false);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -169,6 +175,94 @@ export default function ResourceDetail() {
     } finally {
       setRemovingImageId(null);
     }
+  };
+
+  // Vision analyze: send the resource's images to Claude and propose
+  // metadata + a narrative content block. The user reviews suggestions
+  // and chooses whether to overwrite existing values or only fill blanks.
+  const runVisionAnalyze = async () => {
+    if (images.length === 0 || !resource) return;
+    setVisionRunning(true);
+    setVisionError(null);
+    setVisionSuggestions(null);
+    try {
+      const result = await analyzeResourceWithImages({
+        images: images.map((i) => ({
+          image_path: i.image_path,
+          caption: i.caption,
+        })),
+        existing: {
+          title: resource.title,
+          content: resource.content,
+          source: resource.source,
+          themes: resource.themes,
+          scripture_refs: resource.scripture_refs,
+          tone: resource.tone,
+          resource_type: resource.resource_type,
+        },
+      });
+      setVisionSuggestions(result);
+    } catch (e) {
+      setVisionError(e.message || String(e));
+    } finally {
+      setVisionRunning(false);
+    }
+  };
+
+  // Apply vision suggestions to the resource. If `overwrite` is on, every
+  // suggested field replaces whatever's there. If off, suggestions only
+  // fill empty fields. Themes always merge (deduped union).
+  const applyVisionSuggestions = async () => {
+    if (!visionSuggestions || !resource) return;
+    setVisionApplying(true);
+    setVisionError(null);
+    try {
+      const sug = visionSuggestions;
+      const cur = resource;
+      // Merge themes — always union, since themes are additive in spirit.
+      const themeUnion = Array.from(
+        new Set(
+          [...(cur.themes ?? []), ...(sug.themes ?? [])]
+            .map((t) => t.trim().toLowerCase())
+            .filter(Boolean)
+        )
+      );
+      const pickField = (curVal, sugVal) => {
+        if (visionOverwrite) return sugVal || null;
+        // Fill-blanks-only mode
+        if (curVal && String(curVal).trim()) return curVal;
+        return sugVal || null;
+      };
+      const update = {
+        title: pickField(cur.title, sug.title),
+        content: pickField(cur.content, sug.content) || '',
+        scripture_refs: pickField(cur.scripture_refs, sug.scripture_refs),
+        tone: pickField(cur.tone, sug.tone),
+        themes: themeUnion,
+      };
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('resources')
+          .update(update)
+          .eq('id', resource.id)
+          .select()
+          .single()
+      );
+      if (err) throw err;
+      setResource(data);
+      setVisionSuggestions(null);
+      setVisionOverwrite(false);
+    } catch (e) {
+      setVisionError(e.message || String(e));
+    } finally {
+      setVisionApplying(false);
+    }
+  };
+
+  const cancelVision = () => {
+    setVisionSuggestions(null);
+    setVisionError(null);
+    setVisionOverwrite(false);
   };
 
   const runAnalyze = async () => {
@@ -621,25 +715,122 @@ export default function ResourceDetail() {
                 : 'Optional: scanned pages, diagrams, or photos that go with this resource.'}
             </p>
           </div>
-          <label
-            className={`btn-secondary text-sm cursor-pointer whitespace-nowrap ${
-              uploadingImage ? 'opacity-50 pointer-events-none' : ''
-            }`}
-          >
-            {uploadingImage ? 'Uploading…' : '+ Add image(s)'}
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={handleImageUpload}
-              disabled={uploadingImage}
-            />
-          </label>
+          <div className="flex gap-2 shrink-0">
+            {images.length > 0 && (
+              <button
+                type="button"
+                onClick={runVisionAnalyze}
+                disabled={visionRunning || visionApplying}
+                className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                title="Use Claude vision to suggest title, content narrative, themes, scripture, and tone based on the image(s)"
+              >
+                {visionRunning ? 'Analyzing…' : '✨ Analyze with Claude'}
+              </button>
+            )}
+            <label
+              className={`btn-secondary text-sm cursor-pointer whitespace-nowrap ${
+                uploadingImage ? 'opacity-50 pointer-events-none' : ''
+              }`}
+            >
+              {uploadingImage ? 'Uploading…' : '+ Add image(s)'}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                className="hidden"
+                onChange={handleImageUpload}
+                disabled={uploadingImage}
+              />
+            </label>
+          </div>
         </div>
         {imageError && (
           <p className="text-sm text-red-600 mt-2">{imageError}</p>
+        )}
+        {visionError && (
+          <p className="text-sm text-red-600 mt-2">{visionError}</p>
+        )}
+
+        {/* Vision suggestions panel — appears once Claude responds. */}
+        {visionSuggestions && (
+          <div className="mt-4 border border-umc-700 rounded p-3 bg-umc-50/30 space-y-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="text-sm font-medium text-umc-900">
+                ✨ Claude's suggestions
+              </h3>
+              <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={visionOverwrite}
+                  onChange={(e) => setVisionOverwrite(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300 text-umc-700"
+                />
+                <span>
+                  Overwrite existing values
+                  <span className="block text-[10px] text-gray-500 leading-tight">
+                    {visionOverwrite
+                      ? 'Replace whatever\'s there'
+                      : 'Only fill empty fields (themes always merge)'}
+                  </span>
+                </span>
+              </label>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+              <SuggestionRow
+                label="Title"
+                current={resource.title}
+                suggested={visionSuggestions.title}
+                overwrite={visionOverwrite}
+              />
+              <SuggestionRow
+                label="Tone"
+                current={resource.tone}
+                suggested={visionSuggestions.tone}
+                overwrite={visionOverwrite}
+              />
+              <SuggestionRow
+                label="Scripture"
+                current={resource.scripture_refs}
+                suggested={visionSuggestions.scripture_refs}
+                overwrite={visionOverwrite}
+              />
+              <SuggestionRow
+                label="Themes"
+                current={(resource.themes ?? []).join(', ')}
+                suggested={(visionSuggestions.themes ?? []).join(', ')}
+                overwrite={true /* themes always merge */}
+                noteOverride="(always merged with existing)"
+              />
+              <div className="sm:col-span-2">
+                <SuggestionRow
+                  label="Content (narrative)"
+                  current={resource.content}
+                  suggested={visionSuggestions.content}
+                  overwrite={visionOverwrite}
+                  multiline
+                />
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={applyVisionSuggestions}
+                disabled={visionApplying}
+                className="btn-primary text-sm disabled:opacity-50"
+              >
+                {visionApplying ? 'Applying…' : 'Apply suggestions'}
+              </button>
+              <button
+                type="button"
+                onClick={cancelVision}
+                disabled={visionApplying}
+                className="btn-secondary text-sm"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         )}
         {images.length === 0 ? (
           <p className="mt-3 text-sm text-gray-400 italic">
@@ -729,6 +920,63 @@ export default function ResourceDetail() {
           </ul>
         )}
       </div>
+    </div>
+  );
+}
+
+// Single row in the vision suggestions panel — shows the field's current
+// value (struck through if overwriting), Claude's suggestion, and a hint
+// about whether the suggestion will actually be applied.
+function SuggestionRow({
+  label,
+  current,
+  suggested,
+  overwrite,
+  multiline = false,
+  noteOverride = null,
+}) {
+  const hasCurrent = current && String(current).trim().length > 0;
+  const hasSuggestion = suggested && String(suggested).trim().length > 0;
+  const willApply = overwrite || !hasCurrent;
+
+  return (
+    <div>
+      <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+        {label}
+        <span className="ml-2 text-gray-400 normal-case tracking-normal">
+          {noteOverride
+            ? noteOverride
+            : willApply && hasSuggestion
+            ? '→ will apply'
+            : !hasSuggestion
+            ? '(no suggestion)'
+            : '(kept as-is)'}
+        </span>
+      </p>
+      {hasCurrent && (
+        <p
+          className={`text-xs ${
+            willApply && hasSuggestion
+              ? 'line-through text-gray-400'
+              : 'text-gray-700'
+          } ${multiline ? 'whitespace-pre-wrap' : ''}`}
+        >
+          {current}
+        </p>
+      )}
+      {hasSuggestion && (
+        <p
+          className={`text-xs mt-1 ${
+            willApply ? 'text-umc-900 font-medium' : 'text-gray-400'
+          } ${multiline ? 'whitespace-pre-wrap' : ''}`}
+        >
+          {hasCurrent ? '→ ' : ''}
+          {suggested}
+        </p>
+      )}
+      {!hasCurrent && !hasSuggestion && (
+        <p className="text-xs text-gray-400 italic">—</p>
+      )}
     </div>
   );
 }
