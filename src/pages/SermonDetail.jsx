@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { extractResourcesFromManuscript } from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
+import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -30,18 +31,27 @@ export default function SermonDetail() {
   const [linkedResources, setLinkedResources] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [draft, setDraft] = useState({
-    title: '',
-    scripture_reference: '',
-    theme: '',
-    lectionary_year: '',
-    strength: '',
-    timeless: '',
-    is_eulogy: false,
-    major_stories: '',
-    notes: '',
-    preached_at: '',
-  });
+  // Persist the metadata edit draft to sessionStorage so accidental
+  // navigation doesn't lose changes. Key includes user.id to avoid
+  // cross-user contamination on shared machines.
+  const draftKey =
+    user?.id && id ? `sermon-meta:${user.id}:${id}` : null;
+  const [draft, setDraft, hasMetadataDraft, discardMetadataDraft] =
+    useDraftStorage(draftKey);
+  // True only when the current draft was restored from a previous
+  // session — used to show a small banner so the user knows.
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // If the user navigated back to a sermon they were mid-edit on, drop
+  // them straight into edit mode with their saved draft loaded.
+  useEffect(() => {
+    if (sermon && hasMetadataDraft() && !editing) {
+      setEditing(true);
+      setDraftRestored(true);
+    }
+    // We intentionally only run this once per sermon load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sermon?.id]);
 
   useEffect(() => {
     if (!user?.id) return;
@@ -124,10 +134,21 @@ export default function SermonDetail() {
       preached_at: sermon.preached_at ?? '',
     });
     setEditing(true);
+    setDraftRestored(false);
   };
 
   const cancelEdit = () => {
+    discardMetadataDraft();
     setEditing(false);
+    setDraftRestored(false);
+  };
+
+  // Discard a restored draft and re-seed from the saved sermon. Lets
+  // the user recover when they don't actually want their old changes.
+  const discardRestoredDraft = () => {
+    discardMetadataDraft();
+    setDraftRestored(false);
+    startEdit();
   };
 
   const saveEdit = async () => {
@@ -161,7 +182,9 @@ export default function SermonDetail() {
       );
       if (err) throw err;
       setSermon(data);
+      discardMetadataDraft();
       setEditing(false);
+      setDraftRestored(false);
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -203,8 +226,24 @@ export default function SermonDetail() {
 
       {/* Header / metadata */}
       <div className="card space-y-4">
-        {editing ? (
+        {editing && draft ? (
           <div className="space-y-3">
+            {draftRestored && (
+              <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 flex items-center justify-between gap-3">
+                <p className="text-xs text-amber-900">
+                  Picked up where you left off — these are unsaved changes
+                  from earlier. Save to apply, or discard to start fresh
+                  from the saved version.
+                </p>
+                <button
+                  type="button"
+                  onClick={discardRestoredDraft}
+                  className="text-xs underline text-amber-900 hover:text-amber-700 whitespace-nowrap"
+                >
+                  Discard changes
+                </button>
+              </div>
+            )}
             <div>
               <label className="label">Title</label>
               <input
@@ -1584,28 +1623,61 @@ function RevisionsCard({ sermon, revisions, setRevisions, userId }) {
 
 // Inline manuscript editor — read view with "Edit" toggle, edit view
 // with textarea + DOCX upload, save persists to sermons.manuscript_text.
+//
+// Edit drafts persist to sessionStorage so a navigation away (or the
+// auth re-validation flicker) doesn't lose work. On return, edit mode
+// auto-resumes with a small "unsaved changes restored" banner.
 function ManuscriptCard({ sermon, setSermon }) {
+  const { user } = useAuth();
+  const draftKey =
+    user?.id && sermon?.id
+      ? `sermon-manuscript:${user.id}:${sermon.id}`
+      : null;
+  const [storedDraft, setStoredDraft, hasManuscriptDraft, discardManuscriptDraft] =
+    useDraftStorage(draftKey);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(sermon.manuscript_text ?? '');
+  // The textarea binds to draft. When editing, draft mirrors storedDraft;
+  // when not editing, the textarea isn't mounted so this is unused.
+  const draft = storedDraft ?? '';
+  const setDraft = setStoredDraft;
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
   const [uploadNote, setUploadNote] = useState(null);
+  const [draftRestored, setDraftRestored] = useState(false);
   const docInputRef = useRef(null);
+
+  // Auto-resume edit mode if a draft was saved earlier.
+  useEffect(() => {
+    if (sermon && hasManuscriptDraft() && !editing) {
+      setEditing(true);
+      setDraftRestored(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sermon?.id]);
 
   const startEdit = () => {
     setDraft(sermon.manuscript_text ?? '');
     setEditing(true);
+    setDraftRestored(false);
     setSaveError(null);
     setUploadError(null);
     setUploadNote(null);
   };
 
   const cancelEdit = () => {
+    discardManuscriptDraft();
     setEditing(false);
+    setDraftRestored(false);
     setUploadError(null);
     setUploadNote(null);
+  };
+
+  const discardRestoredDraft = () => {
+    discardManuscriptDraft();
+    setDraftRestored(false);
+    startEdit();
   };
 
   const handleManuscriptUpload = async (e) => {
@@ -1663,7 +1735,9 @@ function ManuscriptCard({ sermon, setSermon }) {
       );
       if (err) throw err;
       setSermon(data);
+      discardManuscriptDraft();
       setEditing(false);
+      setDraftRestored(false);
     } catch (err) {
       setSaveError(err.message || String(err));
     } finally {
@@ -1688,6 +1762,22 @@ function ManuscriptCard({ sermon, setSermon }) {
 
       {editing ? (
         <div className="mt-3 space-y-3">
+          {draftRestored && (
+            <div className="border border-amber-300 bg-amber-50 rounded px-3 py-2 flex items-center justify-between gap-3">
+              <p className="text-xs text-amber-900">
+                Picked up where you left off — these are unsaved manuscript
+                changes from earlier. Save to apply, or discard to start
+                fresh from the saved version.
+              </p>
+              <button
+                type="button"
+                onClick={discardRestoredDraft}
+                className="text-xs underline text-amber-900 hover:text-amber-700 whitespace-nowrap"
+              >
+                Discard changes
+              </button>
+            </div>
+          )}
           <div className="flex justify-end">
             <label
               className={`text-xs cursor-pointer text-umc-700 hover:text-umc-900 underline ${

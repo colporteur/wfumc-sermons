@@ -11,7 +11,15 @@ export default function Login() {
   const [error, setError] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const from = location.state?.from?.pathname || '/';
+  // Preserve the full original URL — pathname AND search/hash. The
+  // current page might be /resources?type=story&library=…, and stripping
+  // the search params after login would dump the user back to a default
+  // /resources view, losing all their filter state.
+  const fromLoc = location.state?.from;
+  const from =
+    (fromLoc?.pathname || '/') +
+    (fromLoc?.search || '') +
+    (fromLoc?.hash || '');
 
   useEffect(() => {
     if (session) navigate(from, { replace: true });

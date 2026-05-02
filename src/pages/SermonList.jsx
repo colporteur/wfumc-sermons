@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { booksFromReference } from '../lib/scripture';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
@@ -42,6 +42,30 @@ const DEFAULT_FILTERS = {
   sort: 'preached_desc',
 };
 
+// Sync filters with URL search params so they survive browser back/forward,
+// reload, and the auth re-validation cycle on tab return.
+function filtersFromSearch(params) {
+  return {
+    search: params.get('q') ?? '',
+    book: params.get('book') ?? 'any',
+    theme: params.get('theme') ?? '',
+    minStrength: params.get('strength') ?? '',
+    preached: params.get('preached') ?? 'any',
+    sort: params.get('sort') ?? 'preached_desc',
+  };
+}
+
+function searchFromFilters(f) {
+  const out = {};
+  if (f.search?.trim()) out.q = f.search;
+  if (f.book && f.book !== 'any') out.book = f.book;
+  if (f.theme) out.theme = f.theme;
+  if (f.minStrength) out.strength = f.minStrength;
+  if (f.preached && f.preached !== 'any') out.preached = f.preached;
+  if (f.sort && f.sort !== 'preached_desc') out.sort = f.sort;
+  return out;
+}
+
 export default function SermonList() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -55,10 +79,18 @@ export default function SermonList() {
   const [latestPreachedBySermon, setLatestPreachedBySermon] = useState(
     new Map()
   );
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const filters = useMemo(
+    () => filtersFromSearch(searchParams),
+    [searchParams]
+  );
 
-  const updateFilter = (key, value) =>
-    setFilters((f) => ({ ...f, [key]: value }));
+  const updateFilter = (key, value) => {
+    const next = { ...filters, [key]: value };
+    // `replace: true` keeps the back button useful (one history entry
+    // per page visit, not per keystroke).
+    setSearchParams(searchFromFilters(next), { replace: true });
+  };
 
   useEffect(() => {
     if (!user?.id) return;
@@ -361,7 +393,7 @@ export default function SermonList() {
             {filtersActive && (
               <button
                 type="button"
-                onClick={() => setFilters(DEFAULT_FILTERS)}
+                onClick={() => setSearchParams({}, { replace: true })}
                 className="text-xs text-umc-700 underline hover:text-umc-900"
               >
                 Reset filters

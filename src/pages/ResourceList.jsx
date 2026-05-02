@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { listMyLibraries } from '../lib/libraries';
 import { publicResourceImageUrl } from '../lib/resourceImages';
@@ -42,6 +42,31 @@ const DEFAULT_FILTERS = {
   sort: 'created_desc',
 };
 
+// Pull filter values from URL search params, falling back to defaults.
+// Keeping filter state in the URL means: navigating to a resource detail
+// and pressing browser-back returns you to the same filtered view; reload
+// preserves filters; the auth re-validation flicker doesn't reset them;
+// and filtered views are shareable / bookmarkable.
+function filtersFromSearch(params) {
+  return {
+    search: params.get('q') ?? '',
+    type: params.get('type') ?? 'any',
+    theme: params.get('theme') ?? '',
+    library: params.get('lib') ?? 'all',
+    sort: params.get('sort') ?? 'created_desc',
+  };
+}
+
+function searchFromFilters(f) {
+  const out = {};
+  if (f.search?.trim()) out.q = f.search;
+  if (f.type && f.type !== 'any') out.type = f.type;
+  if (f.theme) out.theme = f.theme;
+  if (f.library && f.library !== 'all') out.lib = f.library;
+  if (f.sort && f.sort !== 'created_desc') out.sort = f.sort;
+  return out;
+}
+
 export default function ResourceList() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -51,7 +76,14 @@ export default function ResourceList() {
   // resource_images separately, taking the lowest sort_order per resource.
   const [thumbsByResource, setThumbsByResource] = useState({});
   const [libraries, setLibraries] = useState([]);
-  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // Filters are derived from the URL on every render. Filter changes
+  // write to the URL via setSearchParams, which automatically becomes
+  // the source of truth.
+  const filters = useMemo(
+    () => filtersFromSearch(searchParams),
+    [searchParams]
+  );
   // Selection state for bulk actions (move-to-library)
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkLibraryId, setBulkLibraryId] = useState('');
@@ -68,8 +100,12 @@ export default function ResourceList() {
   };
   const clearSelection = () => setSelectedIds(new Set());
 
-  const updateFilter = (key, value) =>
-    setFilters((f) => ({ ...f, [key]: value }));
+  const updateFilter = (key, value) => {
+    const next = { ...filters, [key]: value };
+    // `replace: true` so back/forward isn't cluttered with one history
+    // entry per keystroke when the user types in the search box.
+    setSearchParams(searchFromFilters(next), { replace: true });
+  };
 
   const runBulkMove = async () => {
     const ids = Array.from(selectedIds);
@@ -341,7 +377,7 @@ export default function ResourceList() {
           {(filters.search || filters.type !== 'any' || filters.theme) && (
             <button
               type="button"
-              onClick={() => setFilters(DEFAULT_FILTERS)}
+              onClick={() => setSearchParams({}, { replace: true })}
               className="underline hover:text-gray-700"
             >
               Clear filters
