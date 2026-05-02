@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
+import { extractResourcesFromManuscript } from '../lib/claude';
+import { listMyLibraries } from '../lib/libraries';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -521,6 +523,27 @@ function SermonResourcesCard({
   const [linkError, setLinkError] = useState(null);
   const [unlinkingId, setUnlinkingId] = useState(null);
 
+  // Extract-from-manuscript workflow state
+  const [extracting, setExtracting] = useState(false); // panel mode flag
+  const [extractRunning, setExtractRunning] = useState(false); // Claude in flight
+  const [extractError, setExtractError] = useState(null);
+  // Candidates Claude proposed; per-row editable + selectable
+  const [candidates, setCandidates] = useState([]);
+  const [extractLibraryId, setExtractLibraryId] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return window.localStorage.getItem('wfumc-resources-last-library') || '';
+  });
+  const [savingExtract, setSavingExtract] = useState(false);
+  const [extractLibraries, setExtractLibraries] = useState([]);
+
+  useEffect(() => {
+    if (extracting && extractLibraries.length === 0) {
+      listMyLibraries()
+        .then((libs) => setExtractLibraries(libs))
+        .catch(() => setExtractLibraries([]));
+    }
+  }, [extracting, extractLibraries.length]);
+
   const linkedIds = new Set(
     linkedResources.map((l) => l.resource?.id).filter(Boolean)
   );
@@ -618,6 +641,145 @@ function SermonResourcesCard({
     }
   };
 
+  // Kick off the extract workflow: ask Claude to mine the manuscript.
+  const startExtract = async () => {
+    if (!sermon) return;
+    if (!sermon.manuscript_text || !sermon.manuscript_text.trim()) {
+      setExtractError(
+        'No manuscript saved on this sermon yet. Add one above first.'
+      );
+      setExtracting(true);
+      return;
+    }
+    setExtracting(true);
+    setExtractRunning(true);
+    setExtractError(null);
+    setCandidates([]);
+    try {
+      const result = await extractResourcesFromManuscript({
+        manuscriptText: sermon.manuscript_text,
+        sermonContext: {
+          title: sermon.title,
+          scripture_reference: sermon.scripture_reference,
+          theme: sermon.theme,
+        },
+      });
+      // Initialize per-candidate editable state
+      const init = result.map((r, i) => ({
+        ...r,
+        _id: `cand-${i}`,
+        selected: true,
+      }));
+      setCandidates(init);
+      if (init.length === 0) {
+        setExtractError(
+          "Claude didn't find any resources worth extracting from this manuscript."
+        );
+      }
+    } catch (e) {
+      setExtractError(e.message || String(e));
+    } finally {
+      setExtractRunning(false);
+    }
+  };
+
+  const cancelExtract = () => {
+    setExtracting(false);
+    setExtractRunning(false);
+    setExtractError(null);
+    setCandidates([]);
+  };
+
+  const updateCandidate = (id, patch) => {
+    setCandidates((prev) =>
+      prev.map((c) => (c._id === id ? { ...c, ...patch } : c))
+    );
+  };
+
+  // Bulk save: insert each accepted candidate as a resource AND a
+  // sermon_resources link to this sermon.
+  const saveExtracted = async () => {
+    if (!userId || !sermon) return;
+    const accepted = candidates.filter((c) => c.selected && c.content.trim());
+    if (accepted.length === 0) {
+      setExtractError('Nothing selected to save.');
+      return;
+    }
+    setSavingExtract(true);
+    setExtractError(null);
+    const newLinks = [];
+    const errors = [];
+    try {
+      for (const cand of accepted) {
+        try {
+          const { data: resource, error: insErr } = await withTimeout(
+            supabase
+              .from('resources')
+              .insert({
+                owner_user_id: userId,
+                library_id: extractLibraryId || null,
+                resource_type: cand.type || 'story',
+                title: cand.proposed_title?.trim() || null,
+                content: cand.content.trim(),
+                source: null,
+                source_url: null,
+                themes: cand.themes ?? [],
+                scripture_refs: cand.scripture_refs?.trim() || null,
+                tone: cand.tone?.trim() || null,
+                notes: null,
+              })
+              .select()
+              .single()
+          );
+          if (insErr) throw insErr;
+          // Auto-link to source sermon
+          const { data: link, error: linkErr } = await withTimeout(
+            supabase
+              .from('sermon_resources')
+              .insert({
+                sermon_id: sermon.id,
+                resource_id: resource.id,
+                owner_user_id: userId,
+                used_notes: 'Extracted from manuscript',
+              })
+              .select(
+                'id, used_notes, created_at, resource:resources(id, resource_type, title, content, source, themes, tone)'
+              )
+              .single()
+          );
+          if (linkErr) throw linkErr;
+          newLinks.push(link);
+        } catch (rowErr) {
+          errors.push(
+            `"${cand.proposed_title || cand.content.slice(0, 40)}…": ${
+              rowErr.message || String(rowErr)
+            }`
+          );
+        }
+      }
+      if (newLinks.length > 0) {
+        setLinkedResources((rs) => [...newLinks, ...rs]);
+      }
+      // Remember library choice for next time
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(
+          'wfumc-resources-last-library',
+          extractLibraryId || ''
+        );
+      }
+      if (errors.length > 0) {
+        setExtractError(
+          `Saved ${newLinks.length}; ${errors.length} failed:\n${errors.join('\n')}`
+        );
+      } else {
+        setExtracting(false);
+        setCandidates([]);
+      }
+    } finally {
+      setSavingExtract(false);
+    }
+  };
+
   const TYPE_BADGE = {
     story: { label: 'Story', cls: 'bg-blue-100 text-blue-800' },
     quote: { label: 'Quote', cls: 'bg-purple-100 text-purple-800' },
@@ -642,14 +804,24 @@ function SermonResourcesCard({
             Stories, quotes, and illustrations from your library used in this sermon.
           </p>
         </div>
-        {!adding && (
-          <button
-            type="button"
-            onClick={() => setAdding(true)}
-            className="btn-secondary text-sm whitespace-nowrap"
-          >
-            + Link resource
-          </button>
+        {!adding && !extracting && (
+          <div className="flex gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={startExtract}
+              className="btn-secondary text-sm whitespace-nowrap"
+              title="Use Claude to find stories, quotes, and illustrations in this sermon's manuscript"
+            >
+              ✨ Extract from manuscript
+            </button>
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="btn-secondary text-sm whitespace-nowrap"
+            >
+              + Link resource
+            </button>
+          </div>
         )}
       </div>
 
@@ -801,7 +973,202 @@ function SermonResourcesCard({
         </div>
       )}
 
-      {linkedResources.length === 0 && !adding && (
+      {/* Extract-from-manuscript workflow */}
+      {extracting && (
+        <div className="mt-3 space-y-3 border-t border-gray-100 pt-3">
+          {extractRunning ? (
+            <p className="text-sm text-gray-600 py-4 text-center">
+              ✨ Reading the manuscript… this can take 20-40 seconds.
+            </p>
+          ) : (
+            <>
+              {extractError && (
+                <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 whitespace-pre-wrap">
+                  {extractError}
+                </p>
+              )}
+              {candidates.length > 0 && (
+                <>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Save into library</label>
+                      <select
+                        className="input"
+                        value={extractLibraryId}
+                        onChange={(e) => setExtractLibraryId(e.target.value)}
+                      >
+                        <option value="">Just me (private)</option>
+                        {extractLibraries.map((lib) => (
+                          <option key={lib.id} value={lib.id}>
+                            {lib.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex items-end">
+                      <p className="text-xs text-gray-500">
+                        {candidates.filter((c) => c.selected).length} of{' '}
+                        {candidates.length} selected. Edit titles/themes inline,
+                        then save. Each becomes a new resource auto-linked to
+                        this sermon.
+                      </p>
+                    </div>
+                  </div>
+                  <ul className="space-y-3">
+                    {candidates.map((c) => {
+                      const badge =
+                        TYPE_BADGE[c.type] ?? TYPE_BADGE.story;
+                      return (
+                        <li
+                          key={c._id}
+                          className={`border rounded p-3 ${
+                            c.selected
+                              ? 'border-umc-700 bg-umc-50/30'
+                              : 'border-gray-200 bg-gray-50 opacity-60'
+                          }`}
+                        >
+                          <div className="flex items-start gap-3">
+                            <input
+                              type="checkbox"
+                              checked={!!c.selected}
+                              onChange={(e) =>
+                                updateCandidate(c._id, {
+                                  selected: e.target.checked,
+                                })
+                              }
+                              className="h-4 w-4 mt-1 rounded border-gray-300 text-umc-700"
+                            />
+                            <div className="flex-1 min-w-0 space-y-2">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <div className="sm:col-span-2">
+                                  <input
+                                    type="text"
+                                    className="input text-sm py-1"
+                                    value={c.proposed_title}
+                                    onChange={(e) =>
+                                      updateCandidate(c._id, {
+                                        proposed_title: e.target.value,
+                                      })
+                                    }
+                                    placeholder="Title"
+                                  />
+                                </div>
+                                <select
+                                  className="input text-sm py-1"
+                                  value={c.type}
+                                  onChange={(e) =>
+                                    updateCandidate(c._id, {
+                                      type: e.target.value,
+                                    })
+                                  }
+                                >
+                                  <option value="story">Story</option>
+                                  <option value="quote">Quote</option>
+                                  <option value="illustration">
+                                    Illustration
+                                  </option>
+                                  <option value="joke">Joke</option>
+                                  <option value="note">Note</option>
+                                </select>
+                              </div>
+                              <textarea
+                                className="input text-sm min-h-[80px]"
+                                value={c.content}
+                                onChange={(e) =>
+                                  updateCandidate(c._id, {
+                                    content: e.target.value,
+                                  })
+                                }
+                              />
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                                <input
+                                  type="text"
+                                  className="input text-xs py-1"
+                                  placeholder="themes (comma-separated)"
+                                  value={c.themes.join(', ')}
+                                  onChange={(e) =>
+                                    updateCandidate(c._id, {
+                                      themes: e.target.value
+                                        .split(',')
+                                        .map((t) => t.trim().toLowerCase())
+                                        .filter(Boolean),
+                                    })
+                                  }
+                                />
+                                <input
+                                  type="text"
+                                  className="input text-xs py-1"
+                                  placeholder="scripture refs"
+                                  value={c.scripture_refs}
+                                  onChange={(e) =>
+                                    updateCandidate(c._id, {
+                                      scripture_refs: e.target.value,
+                                    })
+                                  }
+                                />
+                                <input
+                                  type="text"
+                                  className="input text-xs py-1"
+                                  placeholder="tone"
+                                  value={c.tone}
+                                  onChange={(e) =>
+                                    updateCandidate(c._id, {
+                                      tone: e.target.value,
+                                    })
+                                  }
+                                />
+                              </div>
+                              <div className="flex items-baseline gap-2 text-[10px] uppercase tracking-wide">
+                                <span
+                                  className={`px-1.5 py-0.5 rounded ${badge.cls}`}
+                                >
+                                  {badge.label}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              )}
+              <div className="flex gap-2">
+                {candidates.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={saveExtracted}
+                    disabled={
+                      savingExtract ||
+                      candidates.filter((c) => c.selected).length === 0
+                    }
+                    className="btn-primary disabled:opacity-50"
+                  >
+                    {savingExtract
+                      ? 'Saving…'
+                      : `Save ${
+                          candidates.filter((c) => c.selected).length
+                        } resource${
+                          candidates.filter((c) => c.selected).length === 1
+                            ? ''
+                            : 's'
+                        }`}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={cancelExtract}
+                  className="btn-secondary"
+                >
+                  {candidates.length > 0 ? 'Cancel' : 'Close'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      )}
+
+      {linkedResources.length === 0 && !adding && !extracting && (
         <p className="mt-3 text-sm text-gray-400 italic">
           No resources linked to this sermon yet.
         </p>

@@ -110,6 +110,10 @@ export async function analyzeResource({ content, type, title, source }) {
     '',
     'Themes should be lowercase, concise, and reusable as filter tags.',
     'Only include scripture refs that genuinely connect — empty string is fine.',
+    'When suggesting scripture refs, prefer passages from the Revised Common',
+    'Lectionary (3-year cycle, Years A/B/C) when they fit the content. The',
+    'pastor preaches lectionary-based sermons, so RCL connections are most',
+    'useful. Non-RCL passages are still fine when they\'re a clearer match.',
     'No explanation, no prose — just the JSON object.',
   ].join('\n');
 
@@ -146,6 +150,105 @@ export async function analyzeResource({ content, type, title, source }) {
 }
 
 /**
+ * Extract reusable resources (stories / quotes / illustrations / jokes)
+ * from a sermon manuscript. Returns Claude's proposed list — the UI is
+ * responsible for letting the pastor edit/accept/reject before saving.
+ *
+ * @param {Object} input
+ * @param {string} input.manuscriptText      - the full manuscript
+ * @param {Object} [input.sermonContext]     - optional: title, scripture, theme
+ * @returns {Promise<Array<{
+ *   proposed_title: string,
+ *   content: string,
+ *   type: 'story' | 'quote' | 'illustration' | 'joke',
+ *   themes: string[],
+ *   scripture_refs: string,
+ *   tone: string
+ * }>>}
+ */
+export async function extractResourcesFromManuscript({
+  manuscriptText,
+  sermonContext = {},
+}) {
+  if (!manuscriptText || !manuscriptText.trim()) {
+    throw new Error('No manuscript text to extract from.');
+  }
+
+  const system = [
+    'You help a United Methodist pastor mine their own sermon manuscripts',
+    'for reusable building blocks. Identify discrete stories, quotes,',
+    'illustrations, and jokes that could stand alone as a resource the',
+    'pastor (or a co-pastor) might use again in a future sermon.',
+    '',
+    'Be conservative — only extract things that are genuinely reusable on',
+    'their own. Skip transitions, throat-clearing, scripture exposition,',
+    'and material so tied to the sermon\'s context that it makes no sense',
+    'standalone.',
+    '',
+    'For each extracted item, return an object with these keys:',
+    '  proposed_title: a short title for the resource (5-10 words)',
+    '  content:        the actual excerpt, copied verbatim from the manuscript',
+    '                  with light cleanup (fix obvious typos, drop verbal',
+    '                  filler). Multiple paragraphs are fine. Don\'t paraphrase.',
+    '  type:           one of "story", "quote", "illustration", "joke"',
+    '  themes:         array of 3-5 short lowercase theme tags',
+    '  scripture_refs: relevant Bible refs, semicolon-separated, or ""',
+    '  tone:           one short descriptor (humorous, tender, convicting, etc.)',
+    '',
+    'When suggesting scripture refs, prefer Revised Common Lectionary',
+    'passages (Years A/B/C) when they fit. The pastor preaches RCL.',
+    '',
+    'Return ONLY a JSON array of these objects. No prose, no commentary.',
+    'If nothing in the manuscript is worth extracting, return [].',
+  ].join('\n');
+
+  const ctxLines = [];
+  if (sermonContext.title) ctxLines.push(`Sermon title: ${sermonContext.title}`);
+  if (sermonContext.scripture_reference)
+    ctxLines.push(`Scripture: ${sermonContext.scripture_reference}`);
+  if (sermonContext.theme) ctxLines.push(`Theme: ${sermonContext.theme}`);
+  const ctxBlock = ctxLines.length > 0 ? ctxLines.join('\n') + '\n\n' : '';
+
+  const userMessage =
+    `${ctxBlock}Manuscript:\n\n${manuscriptText.trim()}`;
+
+  // Manuscripts can be long. 4096 max tokens for the response gives us
+  // room for a fair number of extractions.
+  const response = await callClaude({
+    system,
+    messages: [{ role: 'user', content: userMessage }],
+    max_tokens: 4096,
+  });
+  const text = extractText(response);
+  const parsed = parseJsonArrayLoose(text);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Couldn't parse Claude's response as a JSON array.");
+  }
+
+  const VALID_TYPES = new Set(['story', 'quote', 'illustration', 'joke']);
+  return parsed
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => ({
+      proposed_title:
+        typeof r.proposed_title === 'string' ? r.proposed_title.trim() : '',
+      content: typeof r.content === 'string' ? r.content.trim() : '',
+      type:
+        typeof r.type === 'string' && VALID_TYPES.has(r.type.trim().toLowerCase())
+          ? r.type.trim().toLowerCase()
+          : 'story',
+      themes: Array.isArray(r.themes)
+        ? r.themes
+            .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+            .filter(Boolean)
+        : [],
+      scripture_refs:
+        typeof r.scripture_refs === 'string' ? r.scripture_refs.trim() : '',
+      tone: typeof r.tone === 'string' ? r.tone.trim() : '',
+    }))
+    .filter((r) => r.content.length > 0);
+}
+
+/**
  * Classify a batch of imported notes into resource types.
  *
  * @param {Array<{ id: string, title?: string, snippet: string }>} items
@@ -165,7 +268,8 @@ export async function classifyResources(items) {
   for (let i = 0; i < items.length; i += BATCH) {
     const batch = items.slice(i, i + BATCH);
     const system = [
-      'You categorize sermon-prep notes into one of:',
+      'You categorize sermon-prep notes (for a United Methodist pastor who',
+      'preaches the Revised Common Lectionary) into one of:',
       '  story         — a narrative anecdote (personal or 3rd-person)',
       '  quote         — a short attributed saying or excerpt',
       '  illustration  — a metaphor or analogy used to teach',
