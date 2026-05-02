@@ -12,25 +12,43 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 /**
  * Low-level proxy call. Mirrors the bulletin app's callClaude.
  * @param {Object} body { messages, system?, max_tokens?, model? }
+ * @param {Object} [opts]
+ * @param {number} [opts.timeoutMs=60000] Claude inference can be slow;
+ *   default 60s. Bigger jobs (manuscript extraction) should pass more.
  */
-export async function callClaude(body) {
+export async function callClaude(body, opts = {}) {
+  const timeoutMs = opts.timeoutMs ?? 60000;
   const {
     data: { session },
   } = await supabase.auth.getSession();
   if (!session) {
     throw new Error('Not signed in');
   }
-  const res = await withTimeout(
-    fetch(`${supabaseUrl}/functions/v1/claude-proxy`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify(body),
-    }),
-    30000
-  );
+  let res;
+  try {
+    res = await withTimeout(
+      fetch(`${supabaseUrl}/functions/v1/claude-proxy`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(body),
+      }),
+      timeoutMs
+    );
+  } catch (e) {
+    // Replace withTimeout's generic "clear localStorage" message with one
+    // that's accurate for Claude calls — they're slow LLM jobs, not
+    // network/auth issues.
+    if (String(e?.message || '').includes('Request timed out')) {
+      throw new Error(
+        `Claude took longer than ${Math.round(timeoutMs / 1000)}s to respond. ` +
+          `For long manuscripts this can happen — try again, or break it into smaller pieces.`
+      );
+    }
+    throw e;
+  }
   if (!res.ok) {
     const errBody = await res.text();
     throw new Error(`Claude proxy error ${res.status}: ${errBody}`);
@@ -213,12 +231,16 @@ export async function extractResourcesFromManuscript({
     `${ctxBlock}Manuscript:\n\n${manuscriptText.trim()}`;
 
   // Manuscripts can be long. 4096 max tokens for the response gives us
-  // room for a fair number of extractions.
-  const response = await callClaude({
-    system,
-    messages: [{ role: 'user', content: userMessage }],
-    max_tokens: 4096,
-  });
+  // room for a fair number of extractions. Allow up to 3 minutes — full
+  // sermons + extraction reasoning routinely take 60-90s.
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+      max_tokens: 4096,
+    },
+    { timeoutMs: 180000 }
+  );
   const text = extractText(response);
   const parsed = parseJsonArrayLoose(text);
   if (!Array.isArray(parsed)) {
@@ -290,11 +312,14 @@ export async function classifyResources(items) {
 
     let parsed = null;
     try {
-      const response = await callClaude({
-        system,
-        messages: [{ role: 'user', content: user }],
-        max_tokens: 1500,
-      });
+      const response = await callClaude(
+        {
+          system,
+          messages: [{ role: 'user', content: user }],
+          max_tokens: 1500,
+        },
+        { timeoutMs: 90000 }
+      );
       const text = extractText(response);
       parsed = parseJsonArrayLoose(text);
     } catch (e) {
