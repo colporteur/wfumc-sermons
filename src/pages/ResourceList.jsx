@@ -2,9 +2,21 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { listMyLibraries } from '../lib/libraries';
-import { publicResourceImageUrl } from '../lib/resourceImages';
+import {
+  publicResourceImageUrl,
+  listResourceImages,
+} from '../lib/resourceImages';
+import { booksFromReference } from '../lib/scripture';
+import {
+  analyzeResource,
+  analyzeResourceWithImages,
+} from '../lib/claude';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
+
+// Sentinel value used in the dropdowns to mean "show only items missing
+// this field". Picked something unlikely to clash with real values.
+const MISSING = '__missing__';
 
 const TYPE_OPTIONS = [
   { value: 'any', label: 'All types' },
@@ -36,6 +48,8 @@ const DEFAULT_FILTERS = {
   search: '',
   type: 'any',
   theme: '',
+  book: '',
+  tone: '',
   // 'all' = every library you can see (incl. personal); 'personal' = only
   // your library_id-null resources; or a specific library uuid.
   library: 'all',
@@ -52,6 +66,8 @@ function filtersFromSearch(params) {
     search: params.get('q') ?? '',
     type: params.get('type') ?? 'any',
     theme: params.get('theme') ?? '',
+    book: params.get('book') ?? '',
+    tone: params.get('tone') ?? '',
     library: params.get('lib') ?? 'all',
     sort: params.get('sort') ?? 'created_desc',
   };
@@ -62,6 +78,8 @@ function searchFromFilters(f) {
   if (f.search?.trim()) out.q = f.search;
   if (f.type && f.type !== 'any') out.type = f.type;
   if (f.theme) out.theme = f.theme;
+  if (f.book) out.book = f.book;
+  if (f.tone) out.tone = f.tone;
   if (f.library && f.library !== 'all') out.lib = f.library;
   if (f.sort && f.sort !== 'created_desc') out.sort = f.sort;
   return out;
@@ -84,11 +102,19 @@ export default function ResourceList() {
     () => filtersFromSearch(searchParams),
     [searchParams]
   );
-  // Selection state for bulk actions (move-to-library)
+  // Selection state for bulk actions (move-to-library, bulk analyze)
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [bulkLibraryId, setBulkLibraryId] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkError, setBulkError] = useState(null);
+  // Bulk analyze state
+  const [bulkAnalyzing, setBulkAnalyzing] = useState(false);
+  const [bulkAnalyzeOverwrite, setBulkAnalyzeOverwrite] = useState(false);
+  const [bulkAnalyzeProgress, setBulkAnalyzeProgress] = useState({
+    done: 0,
+    total: 0,
+    label: '',
+  });
 
   const toggleSelected = (id) => {
     setSelectedIds((prev) => {
@@ -144,6 +170,144 @@ export default function ResourceList() {
       setBulkError(e.message || String(e));
     } finally {
       setBulkMoving(false);
+    }
+  };
+
+  // Bulk Analyze with Claude. For each selected resource:
+  //   - if it has any images → use vision (returns title/content/themes/
+  //     scripture/tone)
+  //   - else → text analyzer (themes/scripture/tone)
+  //
+  // Existing values are kept by default (only blanks fill in). Themes
+  // always merge as a deduped union. With overwrite=true, every Claude
+  // suggestion replaces the current value.
+  const runBulkAnalyze = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    if (
+      !window.confirm(
+        `Analyze ${ids.length} resource${ids.length === 1 ? '' : 's'} with Claude? ` +
+          (bulkAnalyzeOverwrite
+            ? 'Existing values will be REPLACED with Claude suggestions.'
+            : 'Only empty fields will be filled in (themes always merge).')
+      )
+    ) {
+      return;
+    }
+    setBulkAnalyzing(true);
+    setBulkError(null);
+    setBulkAnalyzeProgress({ done: 0, total: ids.length, label: '' });
+
+    const errors = [];
+    let succeeded = 0;
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
+      const resource = resources.find((r) => r.id === id);
+      if (!resource) continue;
+      const shortLabel =
+        (resource.title || resource.content || '(untitled)').slice(0, 50);
+      setBulkAnalyzeProgress({
+        done: i,
+        total: ids.length,
+        label: shortLabel,
+      });
+      try {
+        // Decide vision vs text by checking if there are any images.
+        const imgs = await listResourceImages(id).catch(() => []);
+        let suggestion;
+        if (imgs.length > 0) {
+          suggestion = await analyzeResourceWithImages({
+            images: imgs.map((img) => ({
+              image_path: img.image_path,
+              caption: img.caption,
+            })),
+            existing: {
+              title: resource.title,
+              content: resource.content,
+              source: resource.source,
+              themes: resource.themes,
+              scripture_refs: resource.scripture_refs,
+              tone: resource.tone,
+              resource_type: resource.resource_type,
+            },
+          });
+        } else {
+          // Text analyzer needs content; skip if completely empty.
+          if (!resource.content?.trim()) {
+            errors.push(`"${shortLabel}": no content or images to analyze`);
+            continue;
+          }
+          const textResult = await analyzeResource({
+            content: resource.content,
+            type: resource.resource_type,
+            title: resource.title || undefined,
+            source: resource.source || undefined,
+          });
+          // Pad out the shape so the merge logic below handles it
+          // uniformly (text analyzer doesn't propose title/content).
+          suggestion = {
+            title: '',
+            content: '',
+            themes: textResult.themes,
+            scripture_refs: textResult.scripture_refs,
+            tone: textResult.tone,
+          };
+        }
+
+        // Merge with current. Themes always union; other fields obey
+        // the overwrite checkbox.
+        const themeUnion = Array.from(
+          new Set(
+            [...(resource.themes ?? []), ...(suggestion.themes ?? [])]
+              .map((t) => t.trim().toLowerCase())
+              .filter(Boolean)
+          )
+        );
+        const pick = (curVal, sugVal) => {
+          if (bulkAnalyzeOverwrite) return sugVal || null;
+          if (curVal && String(curVal).trim()) return curVal;
+          return sugVal || null;
+        };
+        const update = {
+          title: pick(resource.title, suggestion.title),
+          content:
+            pick(resource.content, suggestion.content) ||
+            resource.content ||
+            '',
+          scripture_refs: pick(resource.scripture_refs, suggestion.scripture_refs),
+          tone: pick(resource.tone, suggestion.tone),
+          themes: themeUnion,
+        };
+        const { data, error: updErr } = await withTimeout(
+          supabase
+            .from('resources')
+            .update(update)
+            .eq('id', id)
+            .select()
+            .single(),
+          30000
+        );
+        if (updErr) throw updErr;
+        // Update local state in place so the user sees the change without
+        // a full reload.
+        setResources((prev) =>
+          prev.map((r) => (r.id === id ? data : r))
+        );
+        succeeded += 1;
+      } catch (e) {
+        errors.push(`"${shortLabel}": ${e.message || String(e)}`);
+      }
+    }
+
+    setBulkAnalyzeProgress({ done: ids.length, total: ids.length, label: '' });
+    setBulkAnalyzing(false);
+    if (errors.length > 0) {
+      setBulkError(
+        `Analyzed ${succeeded} · ${errors.length} failed:\n${errors.join('\n')}`
+      );
+    } else {
+      // Clean exit: clear selection so the bar collapses.
+      clearSelection();
     }
   };
 
@@ -209,9 +373,38 @@ export default function ResourceList() {
     return Array.from(set).sort();
   }, [resources]);
 
+  // Per-resource list of books extracted from scripture_refs. Cache it
+  // once per resources change so we don't re-parse every render.
+  const booksByResource = useMemo(() => {
+    const map = new Map();
+    for (const r of resources) {
+      map.set(r.id, booksFromReference(r.scripture_refs ?? ''));
+    }
+    return map;
+  }, [resources]);
+
+  const allBooks = useMemo(() => {
+    const set = new Set();
+    for (const books of booksByResource.values()) {
+      for (const b of books) set.add(b);
+    }
+    return Array.from(set).sort();
+  }, [booksByResource]);
+
+  const allTones = useMemo(() => {
+    const set = new Set();
+    for (const r of resources) {
+      const t = (r.tone ?? '').trim();
+      if (t) set.add(t);
+    }
+    return Array.from(set).sort();
+  }, [resources]);
+
   const filtered = useMemo(() => {
     const q = filters.search.trim().toLowerCase();
     const themeQ = filters.theme.trim().toLowerCase();
+    const bookQ = filters.book.trim();
+    const toneQ = filters.tone.trim().toLowerCase();
     let out = resources.filter((r) => {
       if (filters.type !== 'any' && r.resource_type !== filters.type) return false;
       if (filters.library === 'personal' && r.library_id) return false;
@@ -222,8 +415,27 @@ export default function ResourceList() {
       ) {
         return false;
       }
-      if (themeQ && !(r.themes ?? []).some((t) => t.toLowerCase() === themeQ))
-        return false;
+      // Theme filter: MISSING → no themes; specific value → exact match
+      if (themeQ === MISSING) {
+        if ((r.themes ?? []).length > 0) return false;
+      } else if (themeQ) {
+        if (!(r.themes ?? []).some((t) => t.toLowerCase() === themeQ))
+          return false;
+      }
+      // Book filter: MISSING → no recognizable book in scripture_refs;
+      // specific value → that book appears in the parsed list
+      if (bookQ === MISSING) {
+        if ((booksByResource.get(r.id) ?? []).length > 0) return false;
+      } else if (bookQ) {
+        const books = booksByResource.get(r.id) ?? [];
+        if (!books.includes(bookQ)) return false;
+      }
+      // Tone filter: MISSING → empty tone; specific value → exact match
+      if (toneQ === MISSING) {
+        if ((r.tone ?? '').trim().length > 0) return false;
+      } else if (toneQ) {
+        if ((r.tone ?? '').trim().toLowerCase() !== toneQ) return false;
+      }
       if (q) {
         const hay = [
           r.title,
@@ -309,7 +521,7 @@ export default function ResourceList() {
             onChange={(e) => updateFilter('search', e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           <div>
             <label className="label">Library</label>
             <select
@@ -341,21 +553,6 @@ export default function ResourceList() {
             </select>
           </div>
           <div>
-            <label className="label">Theme</label>
-            <select
-              className="input"
-              value={filters.theme}
-              onChange={(e) => updateFilter('theme', e.target.value)}
-            >
-              <option value="">Any theme</option>
-              {allThemes.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
             <label className="label">Sort</label>
             <select
               className="input"
@@ -369,12 +566,65 @@ export default function ResourceList() {
               ))}
             </select>
           </div>
+          <div>
+            <label className="label">Theme</label>
+            <select
+              className="input"
+              value={filters.theme}
+              onChange={(e) => updateFilter('theme', e.target.value)}
+            >
+              <option value="">Any theme</option>
+              <option value={MISSING}>(none — missing themes)</option>
+              {allThemes.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Book of Bible</label>
+            <select
+              className="input"
+              value={filters.book}
+              onChange={(e) => updateFilter('book', e.target.value)}
+            >
+              <option value="">Any book</option>
+              <option value={MISSING}>(none — missing scripture)</option>
+              {allBooks.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label">Tone</label>
+            <select
+              className="input"
+              value={filters.tone}
+              onChange={(e) => updateFilter('tone', e.target.value)}
+            >
+              <option value="">Any tone</option>
+              <option value={MISSING}>(none — missing tone)</option>
+              {allTones.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
         <div className="flex items-center justify-between text-xs text-gray-500">
           <span>
             Showing {filtered.length} of {resources.length}
           </span>
-          {(filters.search || filters.type !== 'any' || filters.theme) && (
+          {(filters.search ||
+            filters.type !== 'any' ||
+            filters.theme ||
+            filters.book ||
+            filters.tone ||
+            (filters.library && filters.library !== 'all')) && (
             <button
               type="button"
               onClick={() => setSearchParams({}, { replace: true })}
@@ -508,45 +758,96 @@ export default function ResourceList() {
           is selected. Lets the pastor move many resources to a library
           (or back to private) in one shot. */}
       {selectedIds.size > 0 && (
-        <div className="fixed bottom-4 inset-x-4 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-2xl z-20 card shadow-xl bg-white border-umc-700">
+        <div className="fixed bottom-4 inset-x-4 sm:left-1/2 sm:-translate-x-1/2 sm:max-w-3xl z-20 card shadow-xl bg-white border-umc-700 space-y-3">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <span className="text-sm font-medium text-umc-900">
               {selectedIds.size} selected
             </span>
-            <div className="flex items-center gap-2 flex-wrap">
-              <select
-                className="input text-sm py-1"
-                value={bulkLibraryId}
-                onChange={(e) => setBulkLibraryId(e.target.value)}
-                disabled={bulkMoving}
-              >
-                <option value="">Move to: Just me (private)</option>
-                {libraries.map((lib) => (
-                  <option key={lib.id} value={lib.id}>
-                    Move to: {lib.name}
-                  </option>
-                ))}
-              </select>
+            <button
+              type="button"
+              onClick={clearSelection}
+              disabled={bulkMoving || bulkAnalyzing}
+              className="btn-secondary text-sm"
+            >
+              Clear
+            </button>
+          </div>
+
+          {/* Move-to-library row */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              className="input text-sm py-1 flex-1 min-w-[200px]"
+              value={bulkLibraryId}
+              onChange={(e) => setBulkLibraryId(e.target.value)}
+              disabled={bulkMoving || bulkAnalyzing}
+            >
+              <option value="">Move to: Just me (private)</option>
+              {libraries.map((lib) => (
+                <option key={lib.id} value={lib.id}>
+                  Move to: {lib.name}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={runBulkMove}
+              disabled={bulkMoving || bulkAnalyzing}
+              className="btn-primary text-sm disabled:opacity-50"
+            >
+              {bulkMoving ? 'Moving…' : 'Apply move'}
+            </button>
+          </div>
+
+          {/* Analyze-with-Claude row */}
+          <div className="border-t border-gray-100 pt-3 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={bulkAnalyzeOverwrite}
+                  onChange={(e) => setBulkAnalyzeOverwrite(e.target.checked)}
+                  disabled={bulkAnalyzing}
+                  className="h-4 w-4 rounded border-gray-300 text-umc-700"
+                />
+                <span>
+                  Overwrite existing values
+                  <span className="block text-[10px] text-gray-500 leading-tight">
+                    {bulkAnalyzeOverwrite
+                      ? 'Replace whatever\'s there'
+                      : 'Only fill empty fields (themes always merge)'}
+                  </span>
+                </span>
+              </label>
               <button
                 type="button"
-                onClick={runBulkMove}
-                disabled={bulkMoving}
+                onClick={runBulkAnalyze}
+                disabled={bulkAnalyzing || bulkMoving}
                 className="btn-primary text-sm disabled:opacity-50"
               >
-                {bulkMoving ? 'Moving…' : 'Apply'}
-              </button>
-              <button
-                type="button"
-                onClick={clearSelection}
-                disabled={bulkMoving}
-                className="btn-secondary text-sm"
-              >
-                Clear
+                {bulkAnalyzing
+                  ? `Analyzing ${bulkAnalyzeProgress.done}/${bulkAnalyzeProgress.total}…`
+                  : `✨ Analyze ${selectedIds.size} with Claude`}
               </button>
             </div>
+            {bulkAnalyzing && bulkAnalyzeProgress.label && (
+              <p className="text-xs text-gray-500 truncate">
+                Working on: {bulkAnalyzeProgress.label}
+              </p>
+            )}
+            {bulkAnalyzing && bulkAnalyzeProgress.total > 0 && (
+              <div className="w-full bg-gray-200 rounded h-1.5">
+                <div
+                  className="bg-umc-700 h-1.5 rounded transition-all"
+                  style={{
+                    width: `${(bulkAnalyzeProgress.done / bulkAnalyzeProgress.total) * 100}%`,
+                  }}
+                />
+              </div>
+            )}
           </div>
+
           {bulkError && (
-            <p className="text-sm text-red-600 mt-2">{bulkError}</p>
+            <p className="text-sm text-red-600 whitespace-pre-wrap">{bulkError}</p>
           )}
         </div>
       )}
