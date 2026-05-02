@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { parseEnex } from '../lib/enex';
-import { classifyResources } from '../lib/claude';
+import { classifyResources, isGenericTitle } from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
 import {
   uploadResourceImage,
@@ -64,10 +64,16 @@ export default function ImportResources() {
       const text = await file.text();
       const notes = await parseEnex(text);
       setParsed(notes);
-      // Initialize rows: all selected, default type 'note'
+      // Initialize rows: all selected, default type 'note', editable
+      // title seeded from the parsed note (blank when generic so the
+      // user notices and either lets Claude propose or types one).
       const initRows = {};
       for (const n of notes) {
-        initRows[n.hash] = { selected: true, type: 'note' };
+        initRows[n.hash] = {
+          selected: true,
+          type: 'note',
+          title: isGenericTitle(n.title) ? '' : n.title,
+        };
       }
       setRows(initRows);
       setPhase('preview');
@@ -108,14 +114,27 @@ export default function ImportResources() {
         return;
       }
       const result = await classifyResources(items);
+      let titledCount = 0;
       setRows((r) => {
         const next = { ...r };
-        for (const [hash, type] of Object.entries(result)) {
-          if (next[hash]) next[hash] = { ...next[hash], type };
+        for (const [hash, info] of Object.entries(result)) {
+          if (!next[hash]) continue;
+          const patch = { type: info.type };
+          // Only fill in a Claude-proposed title if the user hasn't
+          // already typed one in.
+          if (info.title && !next[hash].title?.trim()) {
+            patch.title = info.title;
+            titledCount += 1;
+          }
+          next[hash] = { ...next[hash], ...patch };
         }
         return next;
       });
-      setClassifyMsg(`Classified ${Object.keys(result).length} notes.`);
+      setClassifyMsg(
+        `Classified ${Object.keys(result).length} notes` +
+          (titledCount > 0 ? ` · titled ${titledCount} previously-untitled` : '') +
+          '.'
+      );
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -153,7 +172,13 @@ export default function ImportResources() {
                 owner_user_id: user.id,
                 library_id: libraryId || null,
                 resource_type: rows[n.hash]?.type || 'note',
-                title: n.title || null,
+                // Prefer per-row title (user edit OR Claude-proposed),
+                // fall back to parsed title — but never save the
+                // generic "Untitled Note" placeholder.
+                title:
+                  (rows[n.hash]?.title && rows[n.hash].title.trim()) ||
+                  (isGenericTitle(n.title) ? null : n.title) ||
+                  null,
                 content: n.content || '',
                 source: null,
                 source_url: n.sourceUrl || null,
@@ -483,19 +508,27 @@ function PreviewStep({
                     />
                   </td>
                   <td className="px-3 py-2 align-top">
-                    <div className="font-medium text-umc-900">
-                      {n.title || (
-                        <span className="italic text-gray-400">
-                          (untitled)
-                        </span>
-                      )}
-                      {n.images?.length > 0 && (
-                        <span className="ml-2 text-[10px] uppercase tracking-wide text-pink-700">
+                    <input
+                      type="text"
+                      className="input text-sm py-1 font-medium"
+                      value={row.title ?? ''}
+                      onChange={(e) =>
+                        updateRow(n.hash, { title: e.target.value })
+                      }
+                      placeholder={
+                        isGenericTitle(n.title)
+                          ? 'Untitled — type or use Claude'
+                          : n.title
+                      }
+                    />
+                    {n.images?.length > 0 && (
+                      <div className="mt-1">
+                        <span className="text-[10px] uppercase tracking-wide text-pink-700">
                           {n.images.length} image{n.images.length === 1 ? '' : 's'}
                         </span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-600 line-clamp-2 mt-0.5">
+                      </div>
+                    )}
+                    <p className="text-xs text-gray-600 line-clamp-2 mt-1">
                       {n.content}
                     </p>
                   </td>

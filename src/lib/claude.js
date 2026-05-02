@@ -198,10 +198,25 @@ export async function extractResourcesFromManuscript({
     'illustrations, and jokes that could stand alone as a resource the',
     'pastor (or a co-pastor) might use again in a future sermon.',
     '',
-    'Be conservative — only extract things that are genuinely reusable on',
-    'their own. Skip transitions, throat-clearing, scripture exposition,',
-    'and material so tied to the sermon\'s context that it makes no sense',
-    'standalone.',
+    'Be CONSERVATIVE — only extract concrete artifacts that work standalone.',
+    '',
+    'DO extract:',
+    '  - Personal anecdotes or stories (the pastor\'s own or someone else\'s)',
+    '  - Attributed quotes from books, people, songs, films',
+    '  - Illustrations: metaphors, analogies, parable-style teaching images',
+    '  - Jokes',
+    '  - Concrete examples drawn from history, news, science, literature',
+    '',
+    'DO NOT extract (these are the sermon\'s argument, not reusable resources):',
+    '  - Theological reflection or doctrinal exposition',
+    '  - Discussion, exegesis, or interpretation of a Bible passage',
+    '  - Application of scripture to the congregation\'s situation',
+    '  - Transitions, throat-clearing, framing language',
+    '  - General observations about Christian life that aren\'t tied to a',
+    '    concrete story, quote, or image',
+    '',
+    'Rule of thumb: if the passage primarily REFLECTS or TEACHES, skip it.',
+    'If it primarily TELLS, QUOTES, or PAINTS A PICTURE, extract it.',
     '',
     'For each extracted item, return an object with these keys:',
     '  proposed_title: a short title for the resource (5-10 words)',
@@ -270,13 +285,26 @@ export async function extractResourcesFromManuscript({
     .filter((r) => r.content.length > 0);
 }
 
+// Treat these (case-insensitive) as "no real title, please regenerate".
+const GENERIC_TITLE_RE =
+  /^\s*(\(?untitled\)?( note)?|note|new note|untitled \d*)\s*$/i;
+
+export function isGenericTitle(s) {
+  if (!s || typeof s !== 'string') return true;
+  if (s.trim().length === 0) return true;
+  return GENERIC_TITLE_RE.test(s);
+}
+
 /**
- * Classify a batch of imported notes into resource types.
+ * Classify a batch of imported notes into resource types AND propose a
+ * short title for any input whose title was missing or generic
+ * (e.g., "Untitled Note").
  *
  * @param {Array<{ id: string, title?: string, snippet: string }>} items
- * @returns {Promise<Record<string, 'story'|'quote'|'illustration'|'joke'|'note'|'photo'>>}
- *   Map of input id → suggested type. Items Claude can't classify
- *   default to 'note'.
+ * @returns {Promise<Record<string, { type: string, title?: string }>>}
+ *   Map of input id → { type, title? }. `title` is only present when the
+ *   input title was generic AND Claude proposed something. Items Claude
+ *   can't classify default to type 'note', no title.
  */
 export async function classifyResources(items) {
   if (!items?.length) return {};
@@ -289,6 +317,11 @@ export async function classifyResources(items) {
   const BATCH = 20;
   for (let i = 0; i < items.length; i += BATCH) {
     const batch = items.slice(i, i + BATCH);
+    // Tell Claude WHICH inputs need a fresh title, so it doesn't waste
+    // tokens regenerating titles that are already fine.
+    const needTitle = new Set(
+      batch.filter((it) => isGenericTitle(it.title)).map((it) => it.id)
+    );
     const system = [
       'You categorize sermon-prep notes (for a United Methodist pastor who',
       'preaches the Revised Common Lectionary) into one of:',
@@ -299,15 +332,25 @@ export async function classifyResources(items) {
       '  note          — generic notes, ideas, observations',
       '  photo         — describes a visual reference',
       '',
-      'Return ONLY a JSON array of objects: [{"id": "<the id>", "type": "<one of the above>"}, ...]',
-      'Use the exact ids you receive. No explanation, no prose.',
+      'For each item, return:',
+      '  { "id": "<the id>", "type": "<one of the above>", "title": "<only if needs_title>" }',
+      'When `needs_title` is true on an input, propose a concrete 4-8 word title',
+      'based on the snippet. Otherwise omit the "title" field.',
+      '',
+      'Return ONLY a JSON array. Use the exact ids you receive.',
+      'No explanation, no prose.',
     ].join('\n');
-    const lines = batch.map(
-      (it) =>
-        `id=${it.id}\ntitle: ${it.title || '(untitled)'}\nsnippet: ${(
-          it.snippet || ''
-        ).slice(0, 200).replace(/\s+/g, ' ')}`
-    );
+    const lines = batch.map((it) => {
+      const parts = [
+        `id=${it.id}`,
+        `needs_title=${needTitle.has(it.id)}`,
+        `title: ${it.title || '(untitled)'}`,
+        `snippet: ${(it.snippet || '')
+          .slice(0, 250)
+          .replace(/\s+/g, ' ')}`,
+      ];
+      return parts.join('\n');
+    });
     const user = `Classify these ${batch.length} items:\n\n${lines.join('\n---\n')}`;
 
     let parsed = null;
@@ -316,7 +359,7 @@ export async function classifyResources(items) {
         {
           system,
           messages: [{ role: 'user', content: user }],
-          max_tokens: 1500,
+          max_tokens: 2000,
         },
         { timeoutMs: 90000 }
       );
@@ -330,13 +373,24 @@ export async function classifyResources(items) {
       for (const row of parsed) {
         if (row && typeof row.id === 'string' && typeof row.type === 'string') {
           const t = row.type.trim().toLowerCase();
-          if (VALID.has(t)) out[row.id] = t;
+          if (VALID.has(t)) {
+            const entry = { type: t };
+            if (
+              needTitle.has(row.id) &&
+              typeof row.title === 'string' &&
+              row.title.trim().length > 0 &&
+              !isGenericTitle(row.title)
+            ) {
+              entry.title = row.title.trim();
+            }
+            out[row.id] = entry;
+          }
         }
       }
     }
-    // Anything Claude missed → default to 'note'
+    // Anything Claude missed → default to 'note', no title proposal.
     for (const it of batch) {
-      if (!out[it.id]) out[it.id] = 'note';
+      if (!out[it.id]) out[it.id] = { type: 'note' };
     }
   }
   return out;

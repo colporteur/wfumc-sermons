@@ -696,6 +696,70 @@ function SermonResourcesCard({
     );
   };
 
+  // Merge all currently-selected candidates into one. The first one's
+  // title/type wins (it's usually the most coherent); contents are
+  // concatenated with a paragraph break; themes are deduped union;
+  // scripture refs are joined with "; "; tones get joined with " / ".
+  // The merged candidate replaces the first selected one in place,
+  // and the others are removed.
+  const mergeSelected = () => {
+    const selected = candidates.filter((c) => c.selected);
+    if (selected.length < 2) return;
+    const titleParts = selected
+      .map((c) => c.proposed_title?.trim())
+      .filter(Boolean);
+    const themeUnion = Array.from(
+      new Set(
+        selected.flatMap((c) =>
+          (c.themes || []).map((t) => t.trim().toLowerCase())
+        )
+      )
+    ).filter(Boolean);
+    const scriptureUnion = Array.from(
+      new Set(
+        selected
+          .flatMap((c) =>
+            (c.scripture_refs || '')
+              .split(/[;,]/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+          )
+      )
+    ).join('; ');
+    const toneUnion = Array.from(
+      new Set(selected.map((c) => c.tone?.trim()).filter(Boolean))
+    ).join(' / ');
+    const merged = {
+      ...selected[0],
+      _id: `merged-${Date.now()}`,
+      // Use first non-empty title; if multiple titles diverge, keep the
+      // first and let the user edit afterward.
+      proposed_title: titleParts[0] || selected[0].proposed_title || '',
+      content: selected.map((c) => c.content.trim()).filter(Boolean).join('\n\n'),
+      themes: themeUnion,
+      scripture_refs: scriptureUnion,
+      tone: toneUnion,
+      selected: true,
+    };
+    const mergedIds = new Set(selected.map((c) => c._id));
+    setCandidates((prev) => {
+      const next = [];
+      let inserted = false;
+      for (const c of prev) {
+        if (mergedIds.has(c._id)) {
+          if (!inserted) {
+            next.push(merged);
+            inserted = true;
+          }
+          // skip the others — they're absorbed into `merged`
+        } else {
+          next.push(c);
+        }
+      }
+      return next;
+    });
+  };
+
   // Bulk save: insert each accepted candidate as a resource AND a
   // sermon_resources link to this sermon.
   const saveExtracted = async () => {
@@ -1135,25 +1199,41 @@ function SermonResourcesCard({
               )}
               <div className="flex gap-2">
                 {candidates.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={saveExtracted}
-                    disabled={
-                      savingExtract ||
-                      candidates.filter((c) => c.selected).length === 0
-                    }
-                    className="btn-primary disabled:opacity-50"
-                  >
-                    {savingExtract
-                      ? 'Saving…'
-                      : `Save ${
-                          candidates.filter((c) => c.selected).length
-                        } resource${
-                          candidates.filter((c) => c.selected).length === 1
-                            ? ''
-                            : 's'
-                        }`}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={saveExtracted}
+                      disabled={
+                        savingExtract ||
+                        candidates.filter((c) => c.selected).length === 0
+                      }
+                      className="btn-primary disabled:opacity-50"
+                    >
+                      {savingExtract
+                        ? 'Saving…'
+                        : `Save ${
+                            candidates.filter((c) => c.selected).length
+                          } resource${
+                            candidates.filter((c) => c.selected).length === 1
+                              ? ''
+                              : 's'
+                          }`}
+                    </button>
+                    {/* Merge appears once 2+ candidates are selected.
+                        Combines them into one (first wins for title/type;
+                        content concatenated; themes/scripture deduped). */}
+                    {candidates.filter((c) => c.selected).length >= 2 && (
+                      <button
+                        type="button"
+                        onClick={mergeSelected}
+                        disabled={savingExtract}
+                        className="btn-secondary disabled:opacity-50"
+                        title="Combine the selected candidates into a single resource"
+                      >
+                        ⊕ Merge {candidates.filter((c) => c.selected).length}
+                      </button>
+                    )}
+                  </>
                 )}
                 <button
                   type="button"
