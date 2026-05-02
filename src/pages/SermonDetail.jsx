@@ -513,6 +513,21 @@ export default function SermonDetail() {
                       )}
                     </div>
                   )}
+                  {p.liturgy_text && (
+                    <details className="mt-2">
+                      <summary className="text-xs text-umc-700 hover:text-umc-900 cursor-pointer">
+                        📄 Liturgy
+                        {p.liturgy_source_filename && (
+                          <span className="ml-1 text-gray-400 font-mono text-[10px]">
+                            ({p.liturgy_source_filename})
+                          </span>
+                        )}
+                      </summary>
+                      <p className="mt-2 text-sm text-gray-800 whitespace-pre-wrap font-serif leading-relaxed bg-gray-50 border border-gray-200 rounded p-3 max-h-96 overflow-y-auto">
+                        {p.liturgy_text}
+                      </p>
+                    </details>
+                  )}
                 </div>
               </li>
             ))}
