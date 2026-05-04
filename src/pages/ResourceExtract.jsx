@@ -160,9 +160,12 @@ export default function ResourceExtract() {
         return;
       }
       // Pre-check every proposal; pastor unchecks ones to skip.
+      // `imported` flips true when the per-row "Add" button has already
+      // saved this proposal, so the bulk Import skips it.
       setProposals(
         items.map((it) => ({
           checked: true,
+          imported: false,
           title: it.proposed_title || '',
           content: it.content || '',
           resource_type: it.type || 'story',
@@ -188,46 +191,73 @@ export default function ResourceExtract() {
     );
   };
 
+  // Build the row payload for one proposal. Used by both bulk-import
+  // and per-row "Add" so the two paths produce identical rows.
+  //
+  // Source attribution flows into TWO fields:
+  //   source       — human-readable attribution (editable, persists
+  //                  even after the user clears the auto-generated tag)
+  //   source_url   — only for URL mode, the actual fetched URL
+  // auto_source_label is the auto-pipeline breadcrumb (cleared when
+  // the user "claims" the resource on the detail page).
+  const buildResourceRow = (p) => ({
+    owner_user_id: user.id,
+    resource_type: p.resource_type,
+    title: p.title.trim() || null,
+    content: p.content,
+    source: sourceLabel.trim() || null,
+    source_url: fetchedUrl || null,
+    themes: p.themes
+      .split(',')
+      .map((t) => t.trim().toLowerCase())
+      .filter(Boolean),
+    scripture_refs: p.scripture_refs.trim() || null,
+    tone: p.tone.trim() || null,
+    notes: null,
+    library_id: libraryId || null,
+    auto_generated: true,
+    auto_source_label: sourceLabel || null,
+  });
+
+  // Per-row Add — saves a single proposal immediately. Useful when
+  // scanning a long list and you want to capture interesting ones
+  // without committing to the whole batch.
+  const handleAddOne = async (i) => {
+    setError(null);
+    const p = proposals[i];
+    if (!p || p.imported) return;
+    // Mark as in-flight so the button disables.
+    updateProposal(i, { adding: true });
+    try {
+      const { error: insErr } = await withTimeout(
+        supabase.from('resources').insert(buildResourceRow(p)).select('id')
+      );
+      if (insErr) throw insErr;
+      // Mark imported + uncheck so bulk Import skips this row too.
+      updateProposal(i, { adding: false, imported: true, checked: false });
+      setImportedCount((c) => c + 1);
+    } catch (err) {
+      updateProposal(i, { adding: false });
+      setError(err.message || String(err));
+    }
+  };
+
   const handleImport = async () => {
     setError(null);
-    const toImport = proposals.filter((p) => p.checked);
+    // Skip already-individually-added rows even if they got re-checked.
+    const toImport = proposals.filter((p) => p.checked && !p.imported);
     if (toImport.length === 0) {
       setError('Nothing checked to import.');
       return;
     }
     setImporting(true);
     try {
-      // Source attribution flows into TWO fields:
-      //   source       — human-readable attribution (editable, persists
-      //                  even after the user clears the auto-generated tag)
-      //   source_url   — only for URL mode, the actual fetched URL
-      // The auto_source_label is the auto-pipeline breadcrumb (cleared
-      // when the user "claims" the resource on the detail page).
-      const sharedSource = sourceLabel.trim() || null;
-      const sharedSourceUrl = fetchedUrl || null;
-      const rows = toImport.map((p) => ({
-        owner_user_id: user.id,
-        resource_type: p.resource_type,
-        title: p.title.trim() || null,
-        content: p.content,
-        source: sharedSource,
-        source_url: sharedSourceUrl,
-        themes: p.themes
-          .split(',')
-          .map((t) => t.trim().toLowerCase())
-          .filter(Boolean),
-        scripture_refs: p.scripture_refs.trim() || null,
-        tone: p.tone.trim() || null,
-        notes: null,
-        library_id: libraryId || null,
-        auto_generated: true,
-        auto_source_label: sourceLabel || null,
-      }));
+      const rows = toImport.map(buildResourceRow);
       const { data, error: insErr } = await withTimeout(
         supabase.from('resources').insert(rows).select('id')
       );
       if (insErr) throw insErr;
-      setImportedCount(data?.length ?? rows.length);
+      setImportedCount((c) => c + (data?.length ?? rows.length));
       setStage('done');
     } catch (err) {
       setError(err.message || String(err));
@@ -495,22 +525,40 @@ export default function ResourceExtract() {
             <span className="text-gray-500 uppercase tracking-wide mr-1">
               Select:
             </span>
-            <BulkBtn onClick={() => setProposals((ps) => ps.map((p) => ({ ...p, checked: true })))}>
-              All ({proposals.length})
+            <BulkBtn
+              onClick={() =>
+                setProposals((ps) =>
+                  ps.map((p) => (p.imported ? p : { ...p, checked: true }))
+                )
+              }
+            >
+              All ({proposals.filter((p) => !p.imported).length})
             </BulkBtn>
-            <BulkBtn onClick={() => setProposals((ps) => ps.map((p) => ({ ...p, checked: false })))}>
+            <BulkBtn
+              onClick={() =>
+                setProposals((ps) =>
+                  ps.map((p) => (p.imported ? p : { ...p, checked: false }))
+                )
+              }
+            >
               None
             </BulkBtn>
             <span className="text-gray-300 mx-1">·</span>
             {TYPE_OPTIONS.map((t) => {
-              const count = proposals.filter((p) => p.resource_type === t).length;
+              const count = proposals.filter(
+                (p) => !p.imported && p.resource_type === t
+              ).length;
               if (count === 0) return null;
               return (
                 <BulkBtn
                   key={t}
                   onClick={() =>
                     setProposals((ps) =>
-                      ps.map((p) => ({ ...p, checked: p.resource_type === t }))
+                      ps.map((p) =>
+                        p.imported
+                          ? p
+                          : { ...p, checked: p.resource_type === t }
+                      )
                     )
                   }
                   title={`Check only ${t} proposals (uncheck the rest)`}
@@ -520,7 +568,13 @@ export default function ResourceExtract() {
               );
             })}
             <span className="ml-auto text-gray-500">
-              {proposals.filter((p) => p.checked).length} / {proposals.length} checked
+              {proposals.filter((p) => p.checked).length} checked
+              {proposals.some((p) => p.imported) && (
+                <>
+                  {' · '}
+                  {proposals.filter((p) => p.imported).length} added
+                </>
+              )}
             </span>
           </div>
 
@@ -528,7 +582,13 @@ export default function ResourceExtract() {
             {proposals.map((p, i) => (
               <li
                 key={i}
-                className={`card ${p.checked ? '' : 'opacity-50'}`}
+                className={`card ${
+                  p.imported
+                    ? 'bg-green-50/40 border-green-200'
+                    : p.checked
+                      ? ''
+                      : 'opacity-50'
+                }`}
               >
                 <div className="flex items-start gap-3">
                   <input
@@ -537,15 +597,37 @@ export default function ResourceExtract() {
                     onChange={(e) =>
                       updateProposal(i, { checked: e.target.checked })
                     }
-                    className="h-4 w-4 mt-1 rounded border-gray-300 text-umc-700"
+                    disabled={p.imported}
+                    className="h-4 w-4 mt-1 rounded border-gray-300 text-umc-700 disabled:opacity-30"
                   />
                   <div className="flex-1 min-w-0 space-y-2">
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div className="md:col-span-2">
-                        <label className="label">Title</label>
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="label mb-0">Title</label>
+                          {/* Per-row Add — saves this proposal alone, useful
+                              for capturing as you scan a long list. Once
+                              added, the row gets a green tint + ✓ Added pill
+                              and the checkbox is disabled. */}
+                          {p.imported ? (
+                            <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-100 text-green-800">
+                              ✓ Added
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleAddOne(i)}
+                              disabled={p.adding || importing}
+                              className="text-xs px-2 py-0.5 rounded border border-umc-700 text-umc-700 hover:bg-umc-50 disabled:opacity-50"
+                              title="Save just this resource right now"
+                            >
+                              {p.adding ? 'Adding…' : '+ Add now'}
+                            </button>
+                          )}
+                        </div>
                         <input
                           type="text"
-                          className="input"
+                          className="input mt-1"
                           value={p.title}
                           onChange={(e) =>
                             updateProposal(i, { title: e.target.value })
@@ -632,14 +714,20 @@ export default function ResourceExtract() {
             <button
               type="button"
               onClick={handleImport}
-              disabled={importing}
+              disabled={
+                importing ||
+                proposals.filter((p) => p.checked && !p.imported).length === 0
+              }
               className="btn-primary disabled:opacity-50"
             >
               {importing
                 ? 'Importing…'
-                : `Import ${proposals.filter((p) => p.checked).length} resource${
-                    proposals.filter((p) => p.checked).length === 1 ? '' : 's'
-                  }`}
+                : (() => {
+                    const n = proposals.filter(
+                      (p) => p.checked && !p.imported
+                    ).length;
+                    return `Import ${n} checked resource${n === 1 ? '' : 's'}`;
+                  })()}
             </button>
           </div>
         </>
