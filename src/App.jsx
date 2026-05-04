@@ -9,6 +9,7 @@ import Import from './pages/Import.jsx';
 import ResourceList from './pages/ResourceList.jsx';
 import ResourceNew from './pages/ResourceNew.jsx';
 import ResourceDetail from './pages/ResourceDetail.jsx';
+import ResourceExtract from './pages/ResourceExtract.jsx';
 import Libraries from './pages/Libraries.jsx';
 import ImportResources from './pages/ImportResources.jsx';
 
@@ -28,6 +29,7 @@ export default function App() {
         <Route path="/sermons/:id" element={<SermonDetail />} />
         <Route path="/resources" element={<ResourceList />} />
         <Route path="/resources/new" element={<ResourceNew />} />
+        <Route path="/resources/extract" element={<ResourceExtract />} />
         <Route path="/resources/:id" element={<ResourceDetail />} />
         <Route path="/libraries" element={<Libraries />} />
         <Route path="/import-resources" element={<ImportResources />} />

@@ -443,6 +443,109 @@ export async function extractResourcesFromManuscript({
     .filter((r) => r.content.length > 0);
 }
 
+/**
+ * Mine a non-manuscript SOURCE (article, book chapter, blog post, etc.)
+ * for sermon-illustration resources. Same shape as
+ * extractResourcesFromManuscript but with a prompt adapted to material
+ * the pastor *read*, not material the pastor wrote.
+ */
+export async function extractResourcesFromSource({
+  sourceText,
+  sourceLabel = '',
+}) {
+  if (!sourceText || !sourceText.trim()) {
+    throw new Error('No source text to extract from.');
+  }
+
+  const system = [
+    'You help a United Methodist pastor mine reading material — articles,',
+    'book chapters, blog posts, talks they listened to — for reusable',
+    'sermon-illustration resources. Identify discrete stories, quotes,',
+    'illustrations, and jokes that could stand alone and might land in',
+    'a future sermon.',
+    '',
+    'Be CONSERVATIVE — only extract concrete artifacts that work standalone.',
+    '',
+    'DO extract:',
+    '  - Personal anecdotes or stories (the author\'s own or someone else\'s)',
+    '  - Memorable, attributable quotes',
+    '  - Illustrations: metaphors, analogies, parable-style teaching images',
+    '  - Jokes',
+    '  - Concrete examples drawn from history, news, science, literature',
+    '',
+    'DO NOT extract:',
+    '  - The author\'s argument, theological reflection, or doctrinal exposition',
+    '  - Exegesis or interpretation of a Bible passage',
+    '  - Transitions, framing language, throat-clearing',
+    '  - General observations that aren\'t tied to a concrete story, quote, or image',
+    '',
+    'Rule of thumb: if the passage primarily REFLECTS or TEACHES, skip it.',
+    'If it primarily TELLS, QUOTES, or PAINTS A PICTURE, extract it.',
+    '',
+    'For each extracted item, return an object with these keys:',
+    '  proposed_title: a short title for the resource (5-10 words)',
+    '  content:        the actual excerpt, copied verbatim from the source',
+    '                  with light cleanup (fix obvious OCR/typo issues, drop',
+    '                  filler). Multiple paragraphs are fine. Don\'t paraphrase.',
+    '  type:           one of "story", "quote", "illustration", "joke"',
+    '  themes:         array of 3-5 short lowercase theme tags',
+    '  scripture_refs: relevant Bible refs the resource might illustrate,',
+    '                  semicolon-separated, or "" if none come to mind',
+    '  tone:           one short descriptor (humorous, tender, convicting, etc.)',
+    '',
+    'When suggesting scripture refs, prefer Revised Common Lectionary',
+    'passages (Years A/B/C) when they fit. The pastor preaches RCL.',
+    '',
+    'Return ONLY a JSON array of these objects. No prose, no commentary.',
+    'If nothing in the source is worth extracting, return [].',
+  ].join('\n');
+
+  const ctx = sourceLabel ? `Source: ${sourceLabel}\n\n` : '';
+  // Cap input so we don't burn tokens on giant PDFs. 60k chars ~= 15k
+  // tokens of input — generous for a chapter or article.
+  const trimmed =
+    sourceText.length > 60000
+      ? sourceText.slice(0, 60000) + '\n…[truncated]'
+      : sourceText;
+  const userMessage = `${ctx}Source text:\n\n${trimmed.trim()}`;
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userMessage }],
+      max_tokens: 4096,
+    },
+    { timeoutMs: 180000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonArrayLoose(text);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Couldn't parse Claude's response as a JSON array.");
+  }
+
+  const VALID_TYPES = new Set(['story', 'quote', 'illustration', 'joke']);
+  return parsed
+    .filter((r) => r && typeof r === 'object')
+    .map((r) => ({
+      proposed_title:
+        typeof r.proposed_title === 'string' ? r.proposed_title.trim() : '',
+      content: typeof r.content === 'string' ? r.content.trim() : '',
+      type:
+        typeof r.type === 'string' && VALID_TYPES.has(r.type.trim().toLowerCase())
+          ? r.type.trim().toLowerCase()
+          : 'story',
+      themes: Array.isArray(r.themes)
+        ? r.themes
+            .map((t) => (typeof t === 'string' ? t.trim().toLowerCase() : ''))
+            .filter(Boolean)
+        : [],
+      scripture_refs:
+        typeof r.scripture_refs === 'string' ? r.scripture_refs.trim() : '',
+      tone: typeof r.tone === 'string' ? r.tone.trim() : '',
+    }))
+    .filter((r) => r.content.length > 0);
+}
+
 // Treat these (case-insensitive) as "no real title, please regenerate".
 const GENERIC_TITLE_RE =
   /^\s*(\(?untitled\)?( note)?|note|new note|untitled \d*)\s*$/i;
