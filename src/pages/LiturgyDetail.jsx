@@ -4,8 +4,12 @@ import { supabase, withTimeout } from '../lib/supabase';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { parseLiturgyIntoSections } from '../lib/claude';
-import { matchLiturgyToSermons } from '../lib/liturgyMatch';
+import {
+  findSermonsByTitle,
+  findSermonsByScripture,
+} from '../lib/liturgyMatch';
 import SendToBulletinModal from '../components/SendToBulletinModal.jsx';
+import TypeaheadSearch from '../components/TypeaheadSearch.jsx';
 
 export default function LiturgyDetail() {
   const { id } = useParams();
@@ -21,9 +25,12 @@ export default function LiturgyDetail() {
   const [draft, setDraft] = useState({ title: '', used_at: '', used_location: '', notes: '' });
   const [busy, setBusy] = useState(false);
   const [reparsing, setReparsing] = useState(false);
-  const [linkingSermon, setLinkingSermon] = useState(false);
-  const [allSermons, setAllSermons] = useState([]);
-  const [sermonPick, setSermonPick] = useState('');
+  // On-demand suggestion panels — populated when the user clicks
+  // "Find by title" / "Find by scripture". Empty by default to avoid
+  // a giant pre-loaded list.
+  const [titleSuggestions, setTitleSuggestions] = useState(null); // null=hidden, []=loaded-empty
+  const [scriptureSuggestions, setScriptureSuggestions] = useState(null);
+  const [searchingMatches, setSearchingMatches] = useState(false);
   const [sendModal, setSendModal] = useState(null); // section being sent
 
   const reload = async () => {
@@ -31,7 +38,7 @@ export default function LiturgyDetail() {
     setLoading(true);
     setError(null);
     try {
-      const [litRes, secRes, linkRes, sermonRes] = await Promise.all([
+      const [litRes, secRes, linkRes] = await Promise.all([
         withTimeout(
           supabase
             .from('sermon_liturgies')
@@ -53,18 +60,10 @@ export default function LiturgyDetail() {
             .eq('liturgy_id', id)
             .order('approved', { ascending: false })
         ),
-        withTimeout(
-          supabase
-            .from('sermons')
-            .select('id, title, scripture_reference')
-            .eq('owner_user_id', user.id)
-            .order('title', { ascending: true })
-        ),
       ]);
       if (litRes.error) throw litRes.error;
       if (secRes.error) throw secRes.error;
       if (linkRes.error) throw linkRes.error;
-      if (sermonRes.error) throw sermonRes.error;
       if (!litRes.data) {
         setError('Liturgy not found.');
         return;
@@ -72,7 +71,6 @@ export default function LiturgyDetail() {
       setLiturgy(litRes.data);
       setSections(secRes.data ?? []);
       setLinks(linkRes.data ?? []);
-      setAllSermons(sermonRes.data ?? []);
       setDraft({
         title: litRes.data.title || '',
         used_at: litRes.data.used_at || '',
@@ -202,47 +200,15 @@ export default function LiturgyDetail() {
     }
   };
 
-  const reRunMatch = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const matches = matchLiturgyToSermons(liturgy, allSermons);
-      const existingIds = new Set(links.map((l) => l.sermon_id));
-      const fresh = matches.filter((m) => !existingIds.has(m.sermon_id));
-      if (fresh.length === 0) {
-        setError('No new matches found.');
-        return;
-      }
-      const { error: err } = await withTimeout(
-        supabase.from('sermon_liturgy_links').insert(
-          fresh.map((m) => ({
-            liturgy_id: liturgy.id,
-            sermon_id: m.sermon_id,
-            owner_user_id: user.id,
-            link_kind: m.link_kind,
-            confidence: m.confidence,
-            approved: m.approved,
-          }))
-        )
-      );
-      if (err) throw err;
-      await reload();
-    } catch (e) {
-      setError(e.message || String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleAddManualLink = async () => {
-    if (!sermonPick) return;
-    setLinkingSermon(true);
+  // Manual link via typeahead pick — always 'manual' / 'high' / approved.
+  const handlePickSermon = async (sermon) => {
+    if (!sermon?.id) return;
     setError(null);
     try {
       const { error: err } = await withTimeout(
         supabase.from('sermon_liturgy_links').insert({
           liturgy_id: liturgy.id,
-          sermon_id: sermonPick,
+          sermon_id: sermon.id,
           owner_user_id: user.id,
           link_kind: 'manual',
           confidence: 'high',
@@ -250,12 +216,99 @@ export default function LiturgyDetail() {
         })
       );
       if (err) throw err;
-      setSermonPick('');
+      // Drop the just-linked sermon from any open suggestions panels.
+      setTitleSuggestions((prev) =>
+        prev ? prev.filter((m) => m.sermon_id !== sermon.id) : prev
+      );
+      setScriptureSuggestions((prev) =>
+        prev ? prev.filter((m) => m.sermon_id !== sermon.id) : prev
+      );
       await reload();
     } catch (e) {
       setError(e.message || String(e));
+    }
+  };
+
+  // On-demand: search for sermons whose TITLES overlap this liturgy's title.
+  // Pulls a small set scoped by ILIKE on shared tokens, then ranks
+  // client-side. Doesn't write anything until the pastor clicks Link.
+  const findByTitle = async () => {
+    setError(null);
+    setSearchingMatches(true);
+    try {
+      // Use the longest 2 tokens from the liturgy title as ILIKE filters
+      // so the SQL stays selective even on large sermon archives.
+      const tokens = (liturgy.title || '')
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 4)
+        .sort((a, b) => b.length - a.length)
+        .slice(0, 4);
+      if (tokens.length === 0) {
+        setTitleSuggestions([]);
+        return;
+      }
+      const orClause = tokens
+        .map((t) => `title.ilike.%${t.replace(/[%_]/g, '')}%`)
+        .join(',');
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermons')
+          .select('id, title, scripture_reference')
+          .eq('owner_user_id', user.id)
+          .or(orClause)
+          .limit(100)
+      );
+      if (err) throw err;
+      const linkedIds = new Set(links.map((l) => l.sermon_id));
+      const candidates = findSermonsByTitle(liturgy, data || [])
+        .filter((c) => !linkedIds.has(c.sermon_id))
+        .slice(0, 25);
+      // Attach the sermon row to each candidate for rendering.
+      const sermonsById = Object.fromEntries((data || []).map((s) => [s.id, s]));
+      setTitleSuggestions(
+        candidates.map((c) => ({ ...c, sermon: sermonsById[c.sermon_id] }))
+      );
+    } catch (e) {
+      setError(e.message || String(e));
+      setTitleSuggestions([]);
     } finally {
-      setLinkingSermon(false);
+      setSearchingMatches(false);
+    }
+  };
+
+  // On-demand: search for sermons whose SCRIPTURE overlaps this liturgy's
+  // detected scripture refs (from title + scripture_refs field).
+  const findByScripture = async () => {
+    setError(null);
+    setSearchingMatches(true);
+    try {
+      // Pull all of the user's sermons that have any scripture reference
+      // — Postgres can't do scripture-overlap without our parser, so we
+      // filter client-side. With even a few thousand sermons this is fine.
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermons')
+          .select('id, title, scripture_reference')
+          .eq('owner_user_id', user.id)
+          .not('scripture_reference', 'is', null)
+          .limit(2000)
+      );
+      if (err) throw err;
+      const linkedIds = new Set(links.map((l) => l.sermon_id));
+      const candidates = findSermonsByScripture(liturgy, data || [])
+        .filter((c) => !linkedIds.has(c.sermon_id))
+        .slice(0, 25);
+      const sermonsById = Object.fromEntries((data || []).map((s) => [s.id, s]));
+      setScriptureSuggestions(
+        candidates.map((c) => ({ ...c, sermon: sermonsById[c.sermon_id] }))
+      );
+    } catch (e) {
+      setError(e.message || String(e));
+      setScriptureSuggestions([]);
+    } finally {
+      setSearchingMatches(false);
     }
   };
 
@@ -290,7 +343,6 @@ export default function LiturgyDetail() {
   const hiddenAnnouncementCount = sections.filter((s) => s.is_announcement)
     .length;
   const linkedSermonIds = new Set(links.map((l) => l.sermon_id));
-  const pickableSermons = allSermons.filter((s) => !linkedSermonIds.has(s.id));
 
   // ---- Render ----
 
@@ -412,50 +464,65 @@ export default function LiturgyDetail() {
       </div>
 
       {/* Linked sermons */}
-      <div className="card">
+      <div className="card space-y-3">
         <div className="flex items-baseline justify-between gap-2 flex-wrap">
           <h2 className="font-serif text-lg text-umc-900">Linked sermons</h2>
-          {pickableSermons.length > 0 && (
-            <div className="flex items-center gap-2">
-              <select
-                value={sermonPick}
-                onChange={(e) => setSermonPick(e.target.value)}
-                className="input text-sm w-auto"
-              >
-                <option value="">Pick a sermon…</option>
-                {pickableSermons.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title || '(untitled)'}
-                    {s.scripture_reference ? ` — ${s.scripture_reference}` : ''}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={handleAddManualLink}
-                disabled={!sermonPick || linkingSermon}
-                className="btn-secondary text-sm disabled:opacity-50"
-              >
-                + Link
-              </button>
-              <button
-                type="button"
-                onClick={reRunMatch}
-                disabled={busy}
-                className="text-xs text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
-                title="Re-run the auto-matcher to find any additional matches"
-              >
-                ↻ Auto-match
-              </button>
-            </div>
-          )}
+          <div className="flex items-center gap-2 text-xs">
+            <button
+              type="button"
+              onClick={findByTitle}
+              disabled={searchingMatches}
+              className="text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+            >
+              Find by title
+            </button>
+            <span className="text-gray-300">·</span>
+            <button
+              type="button"
+              onClick={findByScripture}
+              disabled={searchingMatches}
+              className="text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+            >
+              Find by scripture
+            </button>
+          </div>
         </div>
+
+        {/* Typeahead picker */}
+        <div>
+          <label className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+            Add a sermon by typing
+          </label>
+          <TypeaheadSearch
+            table="sermons"
+            selectColumns="id, title, scripture_reference"
+            searchColumns="title,scripture_reference"
+            labelFor={(r) => r.title || '(untitled)'}
+            subLabelFor={(r) => r.scripture_reference || ''}
+            excludeIds={linkedSermonIds}
+            onPick={handlePickSermon}
+            placeholder="Type a sermon title or scripture…"
+          />
+        </div>
+
+        {/* On-demand suggestion panels */}
+        <SuggestionPanel
+          label="By title"
+          suggestions={titleSuggestions}
+          onPick={handlePickSermon}
+        />
+        <SuggestionPanel
+          label="By scripture"
+          suggestions={scriptureSuggestions}
+          onPick={handlePickSermon}
+        />
+
         {links.length === 0 ? (
-          <p className="text-sm text-gray-500 italic mt-2">
-            Not linked to any sermons.
+          <p className="text-sm text-gray-500 italic">
+            Not linked to any sermons yet.
           </p>
         ) : (
-          <ul className="mt-3 space-y-2">
+          <ul className="space-y-2">
             {links.map((l) => (
               <li
                 key={l.id}
@@ -586,6 +653,67 @@ export default function LiturgyDetail() {
           section={sendModal}
           onClose={() => setSendModal(null)}
         />
+      )}
+    </div>
+  );
+}
+
+// Inline suggestion panel for the "Find by title" / "Find by scripture"
+// buttons. `suggestions` is null when the panel hasn't been opened yet,
+// [] when opened-but-empty, and an array of {sermon_id, sermon, confidence,
+// why} otherwise. Each row has a one-click Link button.
+function SuggestionPanel({ label, suggestions, onPick }) {
+  if (suggestions === null) return null;
+  return (
+    <div className="border border-gray-200 rounded p-2 bg-gray-50">
+      <p className="text-[10px] uppercase tracking-wide text-gray-500 mb-1">
+        Suggestions — {label} ({suggestions.length})
+      </p>
+      {suggestions.length === 0 ? (
+        <p className="text-xs text-gray-500 italic">No matches found.</p>
+      ) : (
+        <ul className="space-y-1">
+          {suggestions.map((m) => (
+            <li
+              key={m.sermon_id}
+              className="flex items-baseline justify-between gap-2 py-0.5"
+            >
+              <div className="min-w-0 flex-1">
+                <span
+                  className={`text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded mr-2 ${
+                    m.confidence === 'high'
+                      ? 'bg-green-100 text-green-800'
+                      : m.confidence === 'medium'
+                        ? 'bg-blue-100 text-blue-800'
+                        : 'bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  {m.confidence}
+                </span>
+                <span className="text-sm text-umc-900 truncate">
+                  {m.sermon?.title || '(untitled)'}
+                </span>
+                {m.sermon?.scripture_reference && (
+                  <span className="ml-2 text-xs text-gray-500">
+                    {m.sermon.scripture_reference}
+                  </span>
+                )}
+                {m.why && (
+                  <span className="ml-2 text-[11px] text-gray-500 italic">
+                    · {m.why}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onPick(m.sermon)}
+                className="text-xs text-umc-700 hover:text-umc-900 underline shrink-0"
+              >
+                Link
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

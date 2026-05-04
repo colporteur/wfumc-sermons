@@ -656,7 +656,7 @@ export default function SermonDetail() {
       />
 
       {/* Liturgies linked to this sermon */}
-      <SermonLiturgiesCard sermonId={sermon.id} />
+      <SermonLiturgiesCard sermon={sermon} />
 
       {/* Manuscript */}
       <ManuscriptCard sermon={sermon} setSermon={setSermon} />

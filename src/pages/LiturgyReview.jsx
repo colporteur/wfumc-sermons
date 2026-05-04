@@ -85,6 +85,33 @@ export default function LiturgyReview() {
     }
   };
 
+  // Bulk reject — used to clear out the medium/low pile that older
+  // imports created before we tightened auto-link to high-confidence only.
+  const bulkReject = async (filter) => {
+    const matching = pending.filter(filter);
+    if (matching.length === 0) return;
+    if (
+      !window.confirm(
+        `Reject ${matching.length} pending link${matching.length === 1 ? '' : 's'}? They'll be deleted.`
+      )
+    ) {
+      return;
+    }
+    try {
+      const ids = matching.map((p) => p.id);
+      const { error: err } = await withTimeout(
+        supabase.from('sermon_liturgy_links').delete().in('id', ids)
+      );
+      if (err) throw err;
+      setPending((prev) => prev.filter((p) => !ids.includes(p.id)));
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const mediumCount = pending.filter((p) => p.confidence === 'medium').length;
+  const lowCount = pending.filter((p) => p.confidence === 'low').length;
+
   if (loading) return <LoadingSpinner label="Loading review queue…" />;
 
   return (
@@ -95,14 +122,45 @@ export default function LiturgyReview() {
       >
         ← All liturgies
       </Link>
-      <div>
-        <h1 className="text-2xl font-serif text-umc-900">
-          Review pending links
-        </h1>
-        <p className="text-sm text-gray-500 mt-0.5">
-          Auto-matcher suggestions waiting for your approval. Approve to make
-          the link real; reject to drop it.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-serif text-umc-900">
+            Review pending links
+          </h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Auto-matcher suggestions waiting for your approval. Approve to
+            make the link real; reject to drop it.
+          </p>
+        </div>
+        {pending.length > 0 && (
+          <div className="flex flex-wrap gap-2 text-xs">
+            {lowCount > 0 && (
+              <button
+                type="button"
+                onClick={() => bulkReject((p) => p.confidence === 'low')}
+                className="btn-secondary text-xs"
+              >
+                Reject all low ({lowCount})
+              </button>
+            )}
+            {mediumCount > 0 && (
+              <button
+                type="button"
+                onClick={() => bulkReject((p) => p.confidence === 'medium')}
+                className="btn-secondary text-xs"
+              >
+                Reject all medium ({mediumCount})
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => bulkReject(() => true)}
+              className="text-xs text-red-600 hover:text-red-800 underline"
+            >
+              Reject all ({pending.length})
+            </button>
+          </div>
+        )}
       </div>
 
       {error && (

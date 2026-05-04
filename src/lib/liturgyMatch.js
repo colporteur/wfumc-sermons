@@ -167,7 +167,7 @@ export function compareRefs(refsA, refsB) {
 
 // Strip noise from a title for comparison: lowercase, drop punctuation,
 // drop short words.
-function titleTokens(s) {
+export function titleTokens(s) {
   if (!s) return [];
   return s
     .toLowerCase()
@@ -176,7 +176,7 @@ function titleTokens(s) {
     .filter((w) => w.length >= 4); // drop "the", "of", "a", etc.
 }
 
-function exactTitleContains(haystack, needle) {
+export function exactTitleContains(haystack, needle) {
   if (!haystack || !needle || needle.length < 4) return false;
   return haystack.toLowerCase().includes(needle.toLowerCase());
 }
@@ -270,4 +270,266 @@ export function matchLiturgyToSermons(liturgy, sermons) {
     });
   }
   return candidates;
+}
+
+// ---- Reverse direction: given a sermon, find candidate liturgies ----
+
+/**
+ * Match one sermon against an array of liturgies. Mirror of
+ * matchLiturgyToSermons but flipped: rates each liturgy against the
+ * given sermon by title overlap and scripture overlap.
+ *
+ * @param {Object} sermon       { title, scripture_reference }
+ * @param {Array}  liturgies    [{ id, title, scripture_refs }]
+ * @returns {Array<{liturgy_id, link_kind, confidence, why}>}
+ */
+export function matchSermonToLiturgies(sermon, liturgies) {
+  if (!sermon || !Array.isArray(liturgies) || liturgies.length === 0) {
+    return [];
+  }
+  const sermonTitle = (sermon.title || '').trim();
+  const sermonTokens = titleTokens(sermonTitle);
+  const sermonRefs = detectScriptureRefs(sermon.scripture_reference || '');
+
+  const out = [];
+  for (const l of liturgies) {
+    if (!l.id) continue;
+    const litTitle = (l.title || '').trim();
+    const litTitleTokens = titleTokens(litTitle);
+    const litRefs = [
+      ...detectScriptureRefs(litTitle),
+      ...detectScriptureRefs(l.scripture_refs || ''),
+    ];
+
+    let titleScore = null;
+    let titleWhy = null;
+    if (sermonTitle && exactTitleContains(litTitle, sermonTitle)) {
+      titleScore = 'high';
+      titleWhy = `Liturgy title contains sermon title.`;
+    } else {
+      const overlap = sermonTokens.filter((t) => litTitleTokens.includes(t));
+      if (overlap.length >= 3) {
+        titleScore = 'medium';
+        titleWhy = `${overlap.length} shared title words: ${overlap.join(', ')}.`;
+      } else if (overlap.length === 2) {
+        titleScore = 'medium';
+        titleWhy = `2 shared title words: ${overlap.join(', ')}.`;
+      } else if (overlap.length === 1) {
+        titleScore = 'low';
+        titleWhy = `1 shared title word: ${overlap[0]}.`;
+      }
+    }
+
+    let scriptureScore = null;
+    let scriptureWhy = null;
+    if (litRefs.length > 0 && sermonRefs.length > 0) {
+      const tier = compareRefs(litRefs, sermonRefs);
+      if (tier === 'verse') {
+        scriptureScore = 'high';
+        scriptureWhy = `Verse-level scripture overlap (${sermonRefs[0].book} ${sermonRefs[0].chapter}).`;
+      } else if (tier === 'chapter') {
+        scriptureScore = 'medium';
+        scriptureWhy = `Same chapter (${sermonRefs[0].book} ${sermonRefs[0].chapter}).`;
+      } else if (tier === 'book') {
+        scriptureScore = 'low';
+        scriptureWhy = `Same book (${sermonRefs[0].book}).`;
+      }
+    }
+
+    const rank = { high: 3, medium: 2, low: 1 };
+    let best = null;
+    let kind = null;
+    let why = null;
+    if (titleScore && (!scriptureScore || rank[titleScore] >= rank[scriptureScore])) {
+      best = titleScore;
+      kind = 'title_match';
+      why = titleWhy;
+    } else if (scriptureScore) {
+      best = scriptureScore;
+      kind = 'scripture_match';
+      why = scriptureWhy;
+    }
+    if (!best) continue;
+    out.push({
+      liturgy_id: l.id,
+      link_kind: kind,
+      confidence: best,
+      why,
+    });
+  }
+  return out;
+}
+
+// ---- Single-mode matchers (used by the on-demand "Find by X" buttons) ----
+//
+// These return ALL candidates above a 'none' tier scored by ONE axis only,
+// with the other axis ignored. Useful for the inline "show me possible
+// scripture matches" / "show me possible title matches" panels — the
+// user wants to see the full set in one direction without it being mixed
+// with the other axis's results.
+
+/** Liturgy → sermons, scripture-only matching. */
+export function findSermonsByScripture(liturgy, sermons) {
+  const litRefs = [
+    ...detectScriptureRefs(liturgy.title || ''),
+    ...detectScriptureRefs(liturgy.scripture_refs || ''),
+  ];
+  if (litRefs.length === 0) return [];
+  const out = [];
+  for (const s of sermons) {
+    const sRefs = detectScriptureRefs(s.scripture_reference || '');
+    if (sRefs.length === 0) continue;
+    const tier = compareRefs(litRefs, sRefs);
+    if (tier === 'none') continue;
+    const conf = tier === 'verse' ? 'high' : tier === 'chapter' ? 'medium' : 'low';
+    out.push({
+      sermon_id: s.id,
+      link_kind: 'scripture_match',
+      confidence: conf,
+      why:
+        tier === 'verse'
+          ? `Verse overlap (${sRefs[0].book} ${sRefs[0].chapter})`
+          : tier === 'chapter'
+            ? `Same chapter (${sRefs[0].book} ${sRefs[0].chapter})`
+            : `Same book (${sRefs[0].book})`,
+    });
+  }
+  return out.sort(
+    (a, b) =>
+      ({ high: 3, medium: 2, low: 1 }[b.confidence] || 0) -
+      ({ high: 3, medium: 2, low: 1 }[a.confidence] || 0)
+  );
+}
+
+/** Liturgy → sermons, title-only matching. */
+export function findSermonsByTitle(liturgy, sermons) {
+  const litTitle = (liturgy.title || '').trim();
+  if (!litTitle) return [];
+  const litTokens = titleTokens(litTitle);
+  const out = [];
+  for (const s of sermons) {
+    const sTitle = (s.title || '').trim();
+    if (!sTitle) continue;
+    if (exactTitleContains(litTitle, sTitle)) {
+      out.push({
+        sermon_id: s.id,
+        link_kind: 'title_match',
+        confidence: 'high',
+        why: 'Liturgy title contains sermon title.',
+      });
+      continue;
+    }
+    const sTokens = titleTokens(sTitle);
+    const overlap = sTokens.filter((t) => litTokens.includes(t));
+    if (overlap.length >= 3) {
+      out.push({
+        sermon_id: s.id,
+        link_kind: 'title_match',
+        confidence: 'medium',
+        why: `${overlap.length} shared words: ${overlap.join(', ')}`,
+      });
+    } else if (overlap.length === 2) {
+      out.push({
+        sermon_id: s.id,
+        link_kind: 'title_match',
+        confidence: 'medium',
+        why: `2 shared words: ${overlap.join(', ')}`,
+      });
+    } else if (overlap.length === 1) {
+      out.push({
+        sermon_id: s.id,
+        link_kind: 'title_match',
+        confidence: 'low',
+        why: `1 shared word: ${overlap[0]}`,
+      });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      ({ high: 3, medium: 2, low: 1 }[b.confidence] || 0) -
+      ({ high: 3, medium: 2, low: 1 }[a.confidence] || 0)
+  );
+}
+
+/** Sermon → liturgies, scripture-only matching. */
+export function findLiturgiesByScripture(sermon, liturgies) {
+  const sRefs = detectScriptureRefs(sermon.scripture_reference || '');
+  if (sRefs.length === 0) return [];
+  const out = [];
+  for (const l of liturgies) {
+    const litRefs = [
+      ...detectScriptureRefs(l.title || ''),
+      ...detectScriptureRefs(l.scripture_refs || ''),
+    ];
+    if (litRefs.length === 0) continue;
+    const tier = compareRefs(litRefs, sRefs);
+    if (tier === 'none') continue;
+    const conf = tier === 'verse' ? 'high' : tier === 'chapter' ? 'medium' : 'low';
+    out.push({
+      liturgy_id: l.id,
+      link_kind: 'scripture_match',
+      confidence: conf,
+      why:
+        tier === 'verse'
+          ? `Verse overlap (${sRefs[0].book} ${sRefs[0].chapter})`
+          : tier === 'chapter'
+            ? `Same chapter (${sRefs[0].book} ${sRefs[0].chapter})`
+            : `Same book (${sRefs[0].book})`,
+    });
+  }
+  return out.sort(
+    (a, b) =>
+      ({ high: 3, medium: 2, low: 1 }[b.confidence] || 0) -
+      ({ high: 3, medium: 2, low: 1 }[a.confidence] || 0)
+  );
+}
+
+/** Sermon → liturgies, title-only matching. */
+export function findLiturgiesByTitle(sermon, liturgies) {
+  const sTitle = (sermon.title || '').trim();
+  if (!sTitle) return [];
+  const sTokens = titleTokens(sTitle);
+  const out = [];
+  for (const l of liturgies) {
+    const litTitle = (l.title || '').trim();
+    if (!litTitle) continue;
+    if (exactTitleContains(litTitle, sTitle)) {
+      out.push({
+        liturgy_id: l.id,
+        link_kind: 'title_match',
+        confidence: 'high',
+        why: 'Liturgy title contains sermon title.',
+      });
+      continue;
+    }
+    const litTokens = titleTokens(litTitle);
+    const overlap = sTokens.filter((t) => litTokens.includes(t));
+    if (overlap.length >= 3) {
+      out.push({
+        liturgy_id: l.id,
+        link_kind: 'title_match',
+        confidence: 'medium',
+        why: `${overlap.length} shared words: ${overlap.join(', ')}`,
+      });
+    } else if (overlap.length === 2) {
+      out.push({
+        liturgy_id: l.id,
+        link_kind: 'title_match',
+        confidence: 'medium',
+        why: `2 shared words: ${overlap.join(', ')}`,
+      });
+    } else if (overlap.length === 1) {
+      out.push({
+        liturgy_id: l.id,
+        link_kind: 'title_match',
+        confidence: 'low',
+        why: `1 shared word: ${overlap[0]}`,
+      });
+    }
+  }
+  return out.sort(
+    (a, b) =>
+      ({ high: 3, medium: 2, low: 1 }[b.confidence] || 0) -
+      ({ high: 3, medium: 2, low: 1 }[a.confidence] || 0)
+  );
 }

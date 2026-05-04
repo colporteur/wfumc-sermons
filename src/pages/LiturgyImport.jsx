@@ -193,14 +193,18 @@ export default function LiturgyImport() {
           }
         }
 
-        // 3. Auto-link against sermons.
+        // 3. Auto-link against sermons — but ONLY high-confidence matches.
+        // Lower-confidence candidates clutter the review queue (a single
+        // ENEX file produced 71 of them in early use). Pastor finds new
+        // links on demand via the "Find by title" / "Find by scripture"
+        // buttons on the liturgy / sermon detail pages.
         const matches = matchLiturgyToSermons(
           {
             title: insertedLiturgy.title,
             scripture_refs: '',
           },
           sermons
-        );
+        ).filter((m) => m.confidence === 'high');
         if (matches.length > 0) {
           const linkRows = matches.map((m) => ({
             liturgy_id: liturgyId,
@@ -208,16 +212,13 @@ export default function LiturgyImport() {
             owner_user_id: user.id,
             link_kind: m.link_kind,
             confidence: m.confidence,
-            approved: m.approved,
+            approved: true,
           }));
           const { error: linkErr } = await withTimeout(
             supabase.from('sermon_liturgy_links').insert(linkRows)
           );
           if (linkErr) throw linkErr;
-          for (const m of matches) {
-            if (m.approved) localResults.autoLinks++;
-            else localResults.pendingLinks++;
-          }
+          localResults.autoLinks += matches.length;
         }
       } catch (err) {
         localResults.errors.push(
