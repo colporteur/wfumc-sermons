@@ -1,23 +1,64 @@
 import { useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { extractPdfText } from '../lib/pdfText';
 
 // PDF split utility — break a big PDF into smaller chunks the pastor
 // can feed into the resource extractor one at a time.
 //
 // Flow: upload PDF, see total page count, type page ranges
 // (e.g., "1-30, 31-60, 61-end"), click Split, get a download for each
-// resulting piece.
+// resulting piece. Each piece can be analyzed directly with Claude
+// (handed off to /resources/extract via sessionStorage), or downloaded
+// for later use.
 //
-// Uses pdf-lib (lazy-loaded). Pure client-side — never uploads anywhere.
+// Uses pdf-lib (lazy-loaded) for splitting; pdfjs (lazy-loaded) when
+// extracting text for the direct-analyze path. Pure client-side —
+// never uploads anywhere.
+
+const HANDOFF_KEY = 'pdfSplit:pendingExtract';
 
 export default function PdfSplit() {
+  const navigate = useNavigate();
   const [file, setFile] = useState(null);
   const [pageCount, setPageCount] = useState(0);
   const [rangesText, setRangesText] = useState('');
   const [working, setWorking] = useState(false);
   const [error, setError] = useState(null);
   const [pieces, setPieces] = useState([]); // [{ filename, blobUrl, fromPage, toPage }]
+  const [analyzingIndex, setAnalyzingIndex] = useState(-1);
   const fileRef = useRef(null);
+
+  // Hand off a split piece to the resource extractor: extract its text
+  // here, stash it in sessionStorage, navigate. /resources/extract
+  // picks it up on mount and pre-loads as if the pastor had uploaded
+  // the piece themselves.
+  const handleAnalyze = async (i) => {
+    const piece = pieces[i];
+    if (!piece) return;
+    setError(null);
+    setAnalyzingIndex(i);
+    try {
+      // Re-fetch the blob from its URL (we only kept the URL, not the
+      // raw bytes, so we'd otherwise need to re-create from pdf-lib).
+      const res = await fetch(piece.blobUrl);
+      const blob = await res.blob();
+      const { text, pageCount: pc } = await extractPdfText(blob);
+      if (!text.trim()) {
+        throw new Error(
+          "Couldn't extract any text from this piece. It might be image-only — try OCR first."
+        );
+      }
+      const sourceLabel = piece.filename.replace(/\.pdf$/i, '');
+      sessionStorage.setItem(
+        HANDOFF_KEY,
+        JSON.stringify({ text, sourceLabel, pageCount: pc })
+      );
+      navigate('/resources/extract');
+    } catch (err) {
+      setError(err.message || 'Failed to analyze this piece.');
+      setAnalyzingIndex(-1);
+    }
+  };
 
   const handleFile = async (e) => {
     setError(null);
@@ -209,13 +250,24 @@ export default function PdfSplit() {
                 <span className="text-sm text-umc-900">
                   Pages {p.fromPage}–{p.toPage}
                 </span>
-                <a
-                  href={p.blobUrl}
-                  download={p.filename}
-                  className="btn-primary text-sm"
-                >
-                  Download
-                </a>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleAnalyze(i)}
+                    disabled={analyzingIndex !== -1}
+                    className="btn-secondary text-sm disabled:opacity-50"
+                    title="Extract text from this piece and open it in the resource extractor"
+                  >
+                    {analyzingIndex === i ? 'Loading…' : '✨ Analyze with Claude'}
+                  </button>
+                  <a
+                    href={p.blobUrl}
+                    download={p.filename}
+                    className="btn-primary text-sm"
+                  >
+                    Download
+                  </a>
+                </div>
               </li>
             ))}
           </ul>

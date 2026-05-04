@@ -53,6 +53,50 @@ export async function callClaude(body, opts = {}) {
   }
   if (!res.ok) {
     const errBody = await res.text();
+    // Try to translate common Anthropic error patterns into something
+    // a user can actually act on, instead of dumping raw JSON. Falls
+    // through to the raw body if we can't recognize the pattern.
+    let parsed;
+    try {
+      parsed = JSON.parse(errBody);
+    } catch {
+      parsed = null;
+    }
+    const apiMessage =
+      parsed?.error?.message ||
+      parsed?.message ||
+      (typeof parsed === 'string' ? parsed : '');
+    const apiType = parsed?.error?.type || '';
+
+    // Anthropic-side content filter (output blocked AFTER generation).
+    // The model wrote a response, but their safety filter refused to
+    // return it. Usually triggered by verbatim excerpts of sensitive,
+    // fringe, or copyrighted material.
+    if (
+      /Output blocked by content filtering policy/i.test(apiMessage) ||
+      /content[_ ]filter/i.test(apiMessage)
+    ) {
+      throw new Error(
+        "Claude generated a response but Anthropic's safety filter " +
+          "refused to return it. This usually happens with verbatim " +
+          'excerpts of fringe / mystical / copyrighted material. Try a ' +
+          'different chunk of the source, a shorter selection, or split ' +
+          'the source into smaller pieces.'
+      );
+    }
+    if (apiType === 'overloaded_error' || res.status === 529) {
+      throw new Error(
+        "Anthropic's API is temporarily overloaded. Wait a minute and try again."
+      );
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(
+        'Claude proxy refused the request. Make sure you are signed in and the Anthropic API key is set in church_settings.'
+      );
+    }
+    if (apiMessage) {
+      throw new Error(`Claude error (${res.status}): ${apiMessage}`);
+    }
     throw new Error(`Claude proxy error ${res.status}: ${errBody}`);
   }
   return res.json();

@@ -56,6 +56,27 @@ export default function ResourceExtract() {
     listMyLibraries().then(setLibraries).catch(() => setLibraries([]));
   }, []);
 
+  // PDF-split handoff — if PdfSplit stashed pre-extracted text in
+  // sessionStorage before navigating here, pick it up and pre-load as
+  // if the pastor had uploaded the piece themselves.
+  useEffect(() => {
+    const raw = sessionStorage.getItem('pdfSplit:pendingExtract');
+    if (!raw) return;
+    sessionStorage.removeItem('pdfSplit:pendingExtract');
+    try {
+      const handoff = JSON.parse(raw);
+      if (!handoff?.text) return;
+      setMode('pdf');
+      setParsedText(handoff.text);
+      setSourceLabel(handoff.sourceLabel || '');
+      setParseStatus(
+        `Loaded ${handoff.text.length.toLocaleString()} characters from ${handoff.pageCount}-page PDF split (${handoff.sourceLabel}).`
+      );
+    } catch {
+      // Ignore — the user can just re-upload manually.
+    }
+  }, []);
+
   // ---- File handlers ----
 
   const handleFile = async (e) => {
