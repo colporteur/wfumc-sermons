@@ -553,3 +553,120 @@ export async function classifyResources(items) {
   }
   return out;
 }
+
+/**
+ * Auto-complete sermon metadata fields from the manuscript.
+ *
+ * Sends the manuscript + the current draft state to Claude and asks
+ * for proposed values for the empty/blank fields. Already-populated
+ * fields are preserved (Claude is told not to change them; the caller
+ * also filters again as a safety net).
+ *
+ * Returns an object whose keys are the field names and values are
+ * Claude's proposals for the BLANK fields only. Suitable for the
+ * caller to merge directly into the form's draft state.
+ *
+ * Fields proposed (when blank in `current`):
+ *   title              — short, evocative sermon title
+ *   scripture_reference — primary text the sermon is on
+ *   theme              — one phrase (e.g., "grace", "stewardship", "Easter")
+ *   timeless           — "Yes" / "No" / "Yes, with modification"
+ *   is_eulogy          — boolean
+ *   major_stories      — comma-separated list of stories used
+ *
+ * Fields NOT proposed:
+ *   lectionary_year — domain-specific code Claude wouldn't reliably know
+ *   strength        — subjective; pastor's call
+ *   preached_at     — date Claude can't infer
+ *   notes           — pastor's private observations
+ */
+export async function autocompleteSermonMetadata({ manuscriptText, current = {} }) {
+  if (!manuscriptText || !manuscriptText.trim()) {
+    throw new Error('No manuscript to analyze.');
+  }
+  // Cap the manuscript length to keep token costs predictable. Sermon
+  // manuscripts above 30k chars are unusual; if it happens, the
+  // first 30k usually contains enough to identify text + theme.
+  const trimmed =
+    manuscriptText.length > 30000
+      ? manuscriptText.slice(0, 30000) + '\n…[truncated]'
+      : manuscriptText;
+
+  // What's already filled — Claude should leave these alone.
+  const blank = (v) =>
+    v === undefined || v === null || (typeof v === 'string' && v.trim() === '');
+  const fieldsToFill = [];
+  if (blank(current.title)) fieldsToFill.push('title');
+  if (blank(current.scripture_reference)) fieldsToFill.push('scripture_reference');
+  if (blank(current.theme)) fieldsToFill.push('theme');
+  if (blank(current.timeless)) fieldsToFill.push('timeless');
+  if (current.is_eulogy === undefined || current.is_eulogy === null) {
+    fieldsToFill.push('is_eulogy');
+  }
+  if (blank(current.major_stories)) fieldsToFill.push('major_stories');
+
+  if (fieldsToFill.length === 0) {
+    return { proposals: {}, fieldsConsidered: [] };
+  }
+
+  const filledNote =
+    Object.entries(current)
+      .filter(([k]) => !fieldsToFill.includes(k))
+      .filter(([, v]) => !blank(v))
+      .map(([k, v]) => `  ${k}: ${JSON.stringify(v)}`)
+      .join('\n') || '  (none)';
+
+  const system = `You are helping a pastor fill in metadata about a sermon they wrote, using the sermon manuscript as context. You will be given the manuscript and the list of fields to propose values for. Return ONLY a JSON object — no markdown code fences, no commentary.
+
+Field rules:
+- "title": A short, evocative sermon title — 3-7 words. Look at the manuscript's opening, recurring phrase, or main image. If the manuscript has a heading that looks like a title, use that. Don't invent — if no title is clear, propose null.
+- "scripture_reference": The primary biblical text the sermon is preaching on. Format like "John 3:1-21" or "1 Corinthians 13" or "Mark 12:28-34". If multiple texts are central, separate with semicolons. If no scripture is clearly central, propose null.
+- "theme": One short phrase capturing the sermon's main theme — e.g., "grace", "Easter", "stewardship", "Trinity Sunday", "forgiveness". Lowercase unless a proper noun.
+- "timeless": One of "Yes", "No", or "Yes, with modification". "Yes" if the sermon could be re-preached at any time of year. "No" if it's tied to a specific event/season (Christmas Eve, an election, a funeral). "Yes, with modification" for borderline cases.
+- "is_eulogy": Boolean. True if this is a funeral/memorial sermon for a specific person.
+- "major_stories": Comma-separated list of the major stories, illustrations, or jokes used in the sermon. Just short labels (3-7 words each), not full retellings. Empty string if none stand out.
+
+Only return the fields you were asked to fill. Be honest — if you genuinely can't tell, return null. Don't invent.`;
+
+  const userText = `Fields to propose values for:
+${fieldsToFill.map((f) => `  - ${f}`).join('\n')}
+
+Already-populated fields (do NOT change these):
+${filledNote}
+
+Manuscript:
+${trimmed}
+
+Return the JSON now.`;
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userText }],
+      max_tokens: 1200,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonLoose(text);
+  if (!parsed) {
+    throw new Error("Couldn't parse Claude's response as JSON.");
+  }
+
+  // Filter to only the fields we asked for, drop nulls/empty proposals.
+  const proposals = {};
+  for (const f of fieldsToFill) {
+    if (!(f in parsed)) continue;
+    const v = parsed[f];
+    if (v === null || v === undefined) continue;
+    if (f === 'is_eulogy') {
+      proposals[f] = Boolean(v);
+    } else if (typeof v === 'string') {
+      const t = v.trim();
+      if (t) proposals[f] = t;
+    } else {
+      proposals[f] = v;
+    }
+  }
+  return { proposals, fieldsConsidered: fieldsToFill };
+}

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
-import { extractResourcesFromManuscript } from '../lib/claude';
+import {
+  extractResourcesFromManuscript,
+  autocompleteSermonMetadata,
+} from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
 import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
@@ -41,6 +44,9 @@ export default function SermonDetail() {
   // True only when the current draft was restored from a previous
   // session — used to show a small banner so the user knows.
   const [draftRestored, setDraftRestored] = useState(false);
+  // Auto-fill state for the "✨ Auto-fill blanks" button on the edit form.
+  const [autofilling, setAutofilling] = useState(false);
+  const [autofillStatus, setAutofillStatus] = useState(null);
 
   // If the user navigated back to a sermon they were mid-edit on, drop
   // them straight into edit mode with their saved draft loaded.
@@ -151,6 +157,55 @@ export default function SermonDetail() {
     startEdit();
   };
 
+  // Auto-fill empty metadata fields from the manuscript via Claude.
+  // Only proposes for fields that are currently blank — anything
+  // already typed stays put. The pastor still has to Save to commit.
+  const autofillMetadata = async () => {
+    if (!sermon?.manuscript_text || !sermon.manuscript_text.trim()) {
+      setAutofillStatus({
+        kind: 'error',
+        message: 'No manuscript on this sermon yet — add one first.',
+      });
+      return;
+    }
+    setAutofilling(true);
+    setAutofillStatus({ kind: 'busy' });
+    try {
+      const { proposals, fieldsConsidered } = await autocompleteSermonMetadata({
+        manuscriptText: sermon.manuscript_text,
+        current: draft,
+      });
+      if (fieldsConsidered.length === 0) {
+        setAutofillStatus({
+          kind: 'info',
+          message: 'Every field already has a value — nothing to auto-fill.',
+        });
+        return;
+      }
+      const filled = Object.keys(proposals);
+      if (filled.length === 0) {
+        setAutofillStatus({
+          kind: 'info',
+          message:
+            "Claude didn't propose values for any of the blank fields — try editing the manuscript or filling in fields manually.",
+        });
+        return;
+      }
+      setDraft({ ...draft, ...proposals });
+      setAutofillStatus({
+        kind: 'success',
+        message: `Filled ${filled.length} field${filled.length === 1 ? '' : 's'}: ${filled.join(', ')}. Review and Save when ready.`,
+      });
+    } catch (e) {
+      setAutofillStatus({
+        kind: 'error',
+        message: e.message || 'Auto-fill failed.',
+      });
+    } finally {
+      setAutofilling(false);
+    }
+  };
+
   const saveEdit = async () => {
     setSaving(true);
     setError(null);
@@ -244,6 +299,54 @@ export default function SermonDetail() {
                 </button>
               </div>
             )}
+
+            {/* Auto-fill blanks via Claude (manuscript as context) */}
+            <div className="flex items-center justify-between gap-2 flex-wrap pb-2 border-b border-gray-100">
+              <p className="text-xs text-gray-500">
+                Have Claude propose values for the blank fields below using the
+                manuscript as context. Already-filled fields are preserved.
+              </p>
+              <button
+                type="button"
+                onClick={autofillMetadata}
+                disabled={autofilling || !sermon?.manuscript_text}
+                className="btn-secondary text-sm disabled:opacity-50 whitespace-nowrap"
+                title={
+                  sermon?.manuscript_text
+                    ? "Use Claude to propose values for blank fields"
+                    : "Add a manuscript first to enable auto-fill"
+                }
+              >
+                {autofilling ? 'Asking Claude…' : '✨ Auto-fill blanks'}
+              </button>
+            </div>
+            {autofillStatus && (
+              <p
+                className={`text-sm rounded px-3 py-2 flex items-center justify-between gap-2 ${
+                  autofillStatus.kind === 'success'
+                    ? 'text-umc-900 bg-umc-50 border border-umc-200'
+                    : autofillStatus.kind === 'error'
+                      ? 'text-red-700 bg-red-50 border border-red-200'
+                      : 'text-gray-700 bg-gray-50 border border-gray-200'
+                }`}
+              >
+                <span>
+                  {autofillStatus.kind === 'busy'
+                    ? 'Reading the manuscript…'
+                    : autofillStatus.message}
+                </span>
+                {autofillStatus.kind !== 'busy' && (
+                  <button
+                    type="button"
+                    onClick={() => setAutofillStatus(null)}
+                    className="text-xs underline whitespace-nowrap"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </p>
+            )}
+
             <div>
               <label className="label">Title</label>
               <input
