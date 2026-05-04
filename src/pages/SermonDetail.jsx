@@ -1661,7 +1661,42 @@ function ManuscriptCard({ sermon, setSermon }) {
   const [uploadError, setUploadError] = useState(null);
   const [uploadNote, setUploadNote] = useState(null);
   const [draftRestored, setDraftRestored] = useState(false);
+  const [copyState, setCopyState] = useState('idle'); // 'idle' | 'copied' | 'error'
   const docInputRef = useRef(null);
+
+  // Copy whatever text is current — the in-progress draft if editing,
+  // otherwise the saved manuscript. Keeps a "Copied!" pip visible for
+  // ~1.5s. Falls back to a textarea-select trick if the Clipboard API
+  // isn't available (some older browsers / locked-down contexts).
+  const handleCopy = async () => {
+    const text = editing ? draft : sermon?.manuscript_text ?? '';
+    if (!text) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      setCopyState('copied');
+      setTimeout(() => setCopyState('idle'), 1500);
+    } catch {
+      setCopyState('error');
+      setTimeout(() => setCopyState('idle'), 2500);
+    }
+  };
+
+  // Show the Copy button whenever there's something to copy in the
+  // current view — saved manuscript when not editing, draft when editing.
+  const hasCopyableText = editing
+    ? Boolean(draft && draft.trim())
+    : Boolean(sermon?.manuscript_text && sermon.manuscript_text.trim());
 
   // Auto-resume edit mode if a draft was saved earlier.
   useEffect(() => {
@@ -1762,17 +1797,33 @@ function ManuscriptCard({ sermon, setSermon }) {
 
   return (
     <div className="card">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
         <h2 className="font-serif text-lg text-umc-900">Manuscript</h2>
-        {!editing && (
-          <button
-            type="button"
-            onClick={startEdit}
-            className="btn-secondary text-sm"
-          >
-            {sermon.manuscript_text ? 'Edit manuscript' : '+ Add manuscript'}
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {hasCopyableText && (
+            <button
+              type="button"
+              onClick={handleCopy}
+              className="btn-secondary text-sm"
+              title="Copy the manuscript text to your clipboard"
+            >
+              {copyState === 'copied'
+                ? '✓ Copied!'
+                : copyState === 'error'
+                  ? 'Copy failed'
+                  : '📋 Copy'}
+            </button>
+          )}
+          {!editing && (
+            <button
+              type="button"
+              onClick={startEdit}
+              className="btn-secondary text-sm"
+            >
+              {sermon.manuscript_text ? 'Edit manuscript' : '+ Add manuscript'}
+            </button>
+          )}
+        </div>
       </div>
 
       {editing ? (
