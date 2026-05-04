@@ -8,6 +8,7 @@ import {
 import { listMyLibraries } from '../lib/libraries';
 import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
+import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
@@ -653,6 +654,9 @@ export default function SermonDetail() {
         setLinkedResources={setLinkedResources}
         userId={user?.id}
       />
+
+      {/* Liturgies linked to this sermon */}
+      <SermonLiturgiesCard sermonId={sermon.id} />
 
       {/* Manuscript */}
       <ManuscriptCard sermon={sermon} setSermon={setSermon} />

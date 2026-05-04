@@ -29,6 +29,12 @@ export default function Layout() {
                 Resources
               </Link>
               <Link
+                to="/liturgies"
+                className="text-umc-100 hover:text-white underline whitespace-nowrap"
+              >
+                Liturgies
+              </Link>
+              <Link
                 to="/import"
                 className="text-umc-100 hover:text-white underline whitespace-nowrap"
               >

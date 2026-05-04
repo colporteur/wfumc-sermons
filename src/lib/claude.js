@@ -817,3 +817,98 @@ Return the JSON now.`;
   }
   return { proposals, fieldsConsidered: fieldsToFill };
 }
+
+/**
+ * Parse a liturgy text body into discrete sections.
+ *
+ * Liturgies typically include several distinct units in one document:
+ * call to worship, opening prayer, scripture, sermon, pastoral
+ * prayer, communion, announcements, benediction. We ask Claude to
+ * identify them so each can be displayed and reused independently.
+ *
+ * Announcements get explicitly flagged so the display layer can hide
+ * them by default — old announcements aren't relevant to a future
+ * sermon's planning workflow.
+ *
+ * Returns: array of { section_kind, title, body, is_announcement, sort_order }
+ */
+export async function parseLiturgyIntoSections({ liturgyTitle, liturgyBody }) {
+  if (!liturgyBody || !liturgyBody.trim()) {
+    throw new Error('Empty liturgy body.');
+  }
+  const trimmed =
+    liturgyBody.length > 30000
+      ? liturgyBody.slice(0, 30000) + '\n…[truncated]'
+      : liturgyBody;
+
+  const system = [
+    'You are parsing a United Methodist worship liturgy into structured',
+    'sections so each piece can be reused independently in future bulletins.',
+    '',
+    'Identify discrete sections. Common section kinds (use the value in',
+    'parentheses for section_kind):',
+    '  - Call to Worship (call_to_worship)',
+    '  - Opening Prayer (opening_prayer)',
+    '  - Pastoral Prayer (pastoral_prayer)',
+    '  - Confession (confession)',
+    '  - Words of Assurance / Pardon (assurance)',
+    '  - Responsive Reading (responsive_reading)',
+    '  - Affirmation of Faith / Creed (affirmation)',
+    '  - Scripture Reading (scripture)',
+    '  - Sermon — usually just a title placeholder, not the manuscript (sermon)',
+    '  - Hymn (hymn)',
+    '  - Offering Prayer / Doxology (offering_prayer)',
+    '  - Communion liturgy (communion)',
+    '  - Announcements / News (announcements)',
+    '  - Benediction / Dismissal (benediction)',
+    '  - Anything else you see (other)',
+    '',
+    'For each section return:',
+    '  section_kind:    one of the values above',
+    '  title:           the heading you found, or a short label if none',
+    '  body:            the verbatim text of that section, lightly cleaned',
+    '                   (collapse runs of whitespace, drop obvious typos).',
+    '                   Multiple paragraphs are fine. Don\'t paraphrase.',
+    '  is_announcement: true if this is an announcements / news / events section',
+    '',
+    'Return ONLY a JSON array of these objects, in the order they appear in',
+    'the liturgy. No prose, no commentary. If you can\'t identify any clear',
+    'sections (e.g., the document is just one big block of text), return a',
+    'single section with section_kind="other" and the full body.',
+  ].join('\n');
+
+  const userText = `Liturgy title: ${liturgyTitle || '(none)'}
+
+Liturgy body:
+${trimmed}
+
+Return the JSON array now.`;
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userText }],
+      max_tokens: 4096,
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonArrayLoose(text);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Couldn't parse Claude's response as a JSON array.");
+  }
+  // Normalize.
+  return parsed
+    .filter((s) => s && typeof s === 'object' && typeof s.body === 'string' && s.body.trim())
+    .map((s, i) => ({
+      section_kind:
+        typeof s.section_kind === 'string' ? s.section_kind.trim().toLowerCase() : 'other',
+      title: typeof s.title === 'string' ? s.title.trim() : null,
+      body: s.body.trim(),
+      is_announcement:
+        Boolean(s.is_announcement) ||
+        (typeof s.section_kind === 'string' &&
+          s.section_kind.toLowerCase().includes('announcement')),
+      sort_order: i,
+    }));
+}

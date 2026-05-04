@@ -13,6 +13,10 @@ import ResourceExtract from './pages/ResourceExtract.jsx';
 import PdfSplit from './pages/PdfSplit.jsx';
 import Libraries from './pages/Libraries.jsx';
 import ImportResources from './pages/ImportResources.jsx';
+import LiturgyList from './pages/LiturgyList.jsx';
+import LiturgyDetail from './pages/LiturgyDetail.jsx';
+import LiturgyImport from './pages/LiturgyImport.jsx';
+import LiturgyReview from './pages/LiturgyReview.jsx';
 
 export default function App() {
   return (
@@ -36,6 +40,10 @@ export default function App() {
         <Route path="/libraries" element={<Libraries />} />
         <Route path="/import-resources" element={<ImportResources />} />
         <Route path="/import" element={<Import />} />
+        <Route path="/liturgies" element={<LiturgyList />} />
+        <Route path="/liturgies/import" element={<LiturgyImport />} />
+        <Route path="/liturgies/review" element={<LiturgyReview />} />
+        <Route path="/liturgies/:id" element={<LiturgyDetail />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
