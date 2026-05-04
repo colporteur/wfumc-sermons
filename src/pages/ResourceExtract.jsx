@@ -40,6 +40,9 @@ export default function ResourceExtract() {
   const [error, setError] = useState(null);
   const [urlInput, setUrlInput] = useState('');
   const [fetchingUrl, setFetchingUrl] = useState(false);
+  // The final URL after redirects, captured from the url-fetch response.
+  // Saved into resources.source_url on import (URL mode only).
+  const [fetchedUrl, setFetchedUrl] = useState('');
   const fileRef = useRef(null);
 
   // Review state
@@ -93,6 +96,7 @@ export default function ResourceExtract() {
     setError(null);
     setParseStatus(null);
     setParsedText('');
+    setFetchedUrl('');
     if (!urlInput.trim()) {
       setError('Paste a URL first.');
       return;
@@ -103,6 +107,7 @@ export default function ResourceExtract() {
       const { text, title, finalUrl } = await fetchUrlText(urlInput);
       setParsedText(text);
       setSourceLabel(title || finalUrl || urlInput);
+      setFetchedUrl(finalUrl || urlInput.trim());
       setParseStatus(
         `Fetched ${text.length.toLocaleString()} characters from ${finalUrl || urlInput}.`
       );
@@ -192,13 +197,21 @@ export default function ResourceExtract() {
     }
     setImporting(true);
     try {
+      // Source attribution flows into TWO fields:
+      //   source       — human-readable attribution (editable, persists
+      //                  even after the user clears the auto-generated tag)
+      //   source_url   — only for URL mode, the actual fetched URL
+      // The auto_source_label is the auto-pipeline breadcrumb (cleared
+      // when the user "claims" the resource on the detail page).
+      const sharedSource = sourceLabel.trim() || null;
+      const sharedSourceUrl = fetchedUrl || null;
       const rows = toImport.map((p) => ({
         owner_user_id: user.id,
         resource_type: p.resource_type,
         title: p.title.trim() || null,
         content: p.content,
-        source: null,
-        source_url: null,
+        source: sharedSource,
+        source_url: sharedSourceUrl,
         themes: p.themes
           .split(',')
           .map((t) => t.trim().toLowerCase())
@@ -231,6 +244,7 @@ export default function ResourceExtract() {
     setParseStatus(null);
     setPasted('');
     setUrlInput('');
+    setFetchedUrl('');
     setError(null);
     setImportedCount(0);
     if (fileRef.current) fileRef.current.value = '';
@@ -289,6 +303,7 @@ export default function ResourceExtract() {
                       setParsedText('');
                       setParseStatus(null);
                       setUrlInput('');
+                      setFetchedUrl('');
                       if (fileRef.current) fileRef.current.value = '';
                     }}
                     className="hidden"
