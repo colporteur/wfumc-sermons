@@ -90,6 +90,8 @@ export default function ResourceList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [resources, setResources] = useState([]);
+  // resource_id → number of sermon_resources rows. 0 == unused.
+  const [usageByResource, setUsageByResource] = useState({});
   // Map of resource_id → first image_path (for thumbnails). We fetch
   // resource_images separately, taking the lowest sort_order per resource.
   const [thumbsByResource, setThumbsByResource] = useState({});
@@ -321,7 +323,7 @@ export default function ResourceList() {
         // No owner filter — RLS returns rows you own AND rows in libraries
         // you're a member of. The pooled-library design means co-members
         // see each other's contributions.
-        const [resRes, imgRes, libsResult] = await Promise.all([
+        const [resRes, imgRes, usageRes, libsResult] = await Promise.all([
           withTimeout(
             supabase
               .from('resources')
@@ -338,10 +340,19 @@ export default function ResourceList() {
               .order('sort_order', { ascending: true })
               .order('created_at', { ascending: true })
           ),
+          // sermon_resources rows = each time a resource was used in a
+          // sermon. RLS scopes to rows the current user owns. Tally per
+          // resource_id for the Used / Unused badge.
+          withTimeout(
+            supabase
+              .from('sermon_resources')
+              .select('resource_id')
+          ),
           listMyLibraries().catch(() => []),
         ]);
         if (resRes.error) throw resRes.error;
         if (imgRes.error) throw imgRes.error;
+        // usage error is non-fatal — log and treat as no usage.
         if (cancelled) return;
         setResources(resRes.data ?? []);
         // First image per resource (data is already sorted).
@@ -350,6 +361,17 @@ export default function ResourceList() {
           if (!thumbs[img.resource_id]) thumbs[img.resource_id] = img.image_path;
         }
         setThumbsByResource(thumbs);
+        // Tally usage per resource_id.
+        const usage = {};
+        if (!usageRes.error) {
+          for (const row of usageRes.data ?? []) {
+            usage[row.resource_id] = (usage[row.resource_id] || 0) + 1;
+          }
+        } else {
+          // eslint-disable-next-line no-console
+          console.warn('sermon_resources query:', usageRes.error.message);
+        }
+        setUsageByResource(usage);
         setLibraries(libsResult);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
@@ -656,6 +678,7 @@ export default function ResourceList() {
             const badge = TYPE_BADGE[r.resource_type] ?? TYPE_BADGE.note;
             const lib = libraries.find((l) => l.id === r.library_id);
             const isMine = r.owner_user_id === user?.id;
+            const usedCount = usageByResource[r.id] || 0;
             // Show thumbnail for any resource that has at least one image,
             // not just photo type.
             const thumbUrl = thumbsByResource[r.id]
@@ -716,6 +739,21 @@ export default function ResourceList() {
                         {!isMine && (
                           <span className="text-[10px] uppercase tracking-wide text-umc-700">
                             shared
+                          </span>
+                        )}
+                        {usedCount > 0 ? (
+                          <span
+                            className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-100 text-green-800"
+                            title={`Used in ${usedCount} sermon${usedCount === 1 ? '' : 's'}`}
+                          >
+                            Used{usedCount > 1 ? ` ${usedCount}×` : ''}
+                          </span>
+                        ) : (
+                          <span
+                            className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-gray-100 text-gray-600"
+                            title="Not yet used in any sermon"
+                          >
+                            Unused
                           </span>
                         )}
                       </div>
