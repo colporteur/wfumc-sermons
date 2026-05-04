@@ -106,6 +106,61 @@ function parseMaster(rows) {
   return out;
 }
 
+// Pull per-row preachings from the Master sheet's church-date columns.
+// The Master sheet has dedicated date columns for each church Pastor
+// Todd has served — Grace, Epworth, Wedowee, Other 1, Other 2 — so a
+// sermon preached at Grace once and at Wedowee once produces two
+// preaching rows (one each). The location string is the column header
+// (so 'Grace', 'Epworth', etc.) for clean intelligence-panel matching.
+//
+// Some cells are non-date strings like 'Unknown' or '~2014'; we skip
+// those rather than guessing. The dedupe step downstream collapses any
+// overlap with the yearly sheet entries (same sermon + date + location).
+const MASTER_LOCATION_COLUMNS = [
+  'Grace',
+  'Epworth',
+  'Wedowee',
+  'Other 1',
+  'Other 2',
+];
+
+function parseMasterPreachings(rows) {
+  if (rows.length < 2) return [];
+  const headers = rows[0].map((h) => String(h || '').trim());
+  const numberIdx = headers.indexOf('Sermon Number');
+  if (numberIdx < 0) return [];
+  const colIdx = {};
+  for (const name of MASTER_LOCATION_COLUMNS) {
+    const i = headers.indexOf(name);
+    if (i >= 0) colIdx[name] = i;
+  }
+  if (Object.keys(colIdx).length === 0) return [];
+
+  const out = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row) continue;
+    const num = Number(row[numberIdx]);
+    if (Number.isNaN(num)) continue;
+    for (const [location, col] of Object.entries(colIdx)) {
+      const cell = row[col];
+      const date = toDateString(cell);
+      // Only emit a preaching if the cell is parseable as a date.
+      // 'Unknown' / '~2014' / '|' etc. get dropped — better to have
+      // a missing entry than a wrong one.
+      if (!date) continue;
+      out.push({
+        original_sermon_number: num,
+        preached_at: date,
+        location,
+        title_used: null,
+        series: null,
+      });
+    }
+  }
+  return out;
+}
+
 // Parse a yearly sheet ("2019 C", etc.) into preaching records.
 function parseYearly(rows) {
   if (rows.length < 2) return [];
@@ -172,8 +227,18 @@ export default function Import() {
       });
       const sermons = parseMaster(masterRows);
 
-      const allPreachings = [];
+      // Master sheet's per-row church-date columns also produce preachings.
+      // Tracked separately in the summary so the preview shows them.
+      const masterPreachings = parseMasterPreachings(masterRows);
+
+      const allPreachings = [...masterPreachings];
       const sheetSummaries = [];
+      if (masterPreachings.length > 0) {
+        sheetSummaries.push({
+          name: 'Master (church-date columns)',
+          count: masterPreachings.length,
+        });
+      }
       for (const name of wb.SheetNames) {
         if (name === 'Master') continue;
         const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], {

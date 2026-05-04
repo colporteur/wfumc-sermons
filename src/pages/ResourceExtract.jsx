@@ -4,6 +4,7 @@ import { supabase, withTimeout } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { extractResourcesFromSource } from '../lib/claude';
 import { extractPdfText } from '../lib/pdfText';
+import { fetchUrlText } from '../lib/urlFetch';
 import { listMyLibraries } from '../lib/libraries';
 
 // Extract resources from arbitrary source material (paste, .txt, .pdf).
@@ -16,6 +17,7 @@ import { listMyLibraries } from '../lib/libraries';
 
 const MODE_OPTIONS = [
   { value: 'paste', label: 'Paste text' },
+  { value: 'url', label: 'Fetch URL' },
   { value: 'txt', label: 'Upload .txt' },
   { value: 'pdf', label: 'Upload .pdf' },
 ];
@@ -36,6 +38,8 @@ export default function ResourceExtract() {
   const [parsedText, setParsedText] = useState(''); // text fed to Claude
   const [parseStatus, setParseStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [urlInput, setUrlInput] = useState('');
+  const [fetchingUrl, setFetchingUrl] = useState(false);
   const fileRef = useRef(null);
 
   // Review state
@@ -85,6 +89,31 @@ export default function ResourceExtract() {
     }
   };
 
+  const handleFetchUrl = async () => {
+    setError(null);
+    setParseStatus(null);
+    setParsedText('');
+    if (!urlInput.trim()) {
+      setError('Paste a URL first.');
+      return;
+    }
+    setFetchingUrl(true);
+    setParseStatus('Fetching the page…');
+    try {
+      const { text, title, finalUrl } = await fetchUrlText(urlInput);
+      setParsedText(text);
+      setSourceLabel(title || finalUrl || urlInput);
+      setParseStatus(
+        `Fetched ${text.length.toLocaleString()} characters from ${finalUrl || urlInput}.`
+      );
+    } catch (e) {
+      setError(e.message || String(e));
+      setParseStatus(null);
+    } finally {
+      setFetchingUrl(false);
+    }
+  };
+
   // ---- Extract ----
 
   const handleExtract = async () => {
@@ -98,6 +127,13 @@ export default function ResourceExtract() {
         return;
       }
       if (!label) label = 'Pasted text';
+    } else if (mode === 'url') {
+      text = parsedText;
+      if (!text) {
+        setError('Click "Fetch page" first.');
+        return;
+      }
+      if (!label) label = urlInput.trim();
     } else {
       text = parsedText;
       if (!text) {
@@ -194,6 +230,7 @@ export default function ResourceExtract() {
     setParsedText('');
     setParseStatus(null);
     setPasted('');
+    setUrlInput('');
     setError(null);
     setImportedCount(0);
     if (fileRef.current) fileRef.current.value = '';
@@ -251,6 +288,7 @@ export default function ResourceExtract() {
                       setMode(o.value);
                       setParsedText('');
                       setParseStatus(null);
+                      setUrlInput('');
                       if (fileRef.current) fileRef.current.value = '';
                     }}
                     className="hidden"
@@ -261,7 +299,7 @@ export default function ResourceExtract() {
             </div>
           </div>
 
-          {mode === 'paste' ? (
+          {mode === 'paste' && (
             <>
               <div>
                 <label className="label">Source label (optional)</label>
@@ -287,7 +325,63 @@ export default function ResourceExtract() {
                 />
               </div>
             </>
-          ) : (
+          )}
+
+          {mode === 'url' && (
+            <>
+              <div>
+                <label className="label">URL to fetch</label>
+                <div className="flex gap-2">
+                  <input
+                    type="url"
+                    className="input flex-1"
+                    value={urlInput}
+                    onChange={(e) => setUrlInput(e.target.value)}
+                    placeholder="https://example.com/article"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleFetchUrl}
+                    disabled={fetchingUrl || !urlInput.trim()}
+                    className="btn-secondary disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {fetchingUrl ? 'Fetching…' : 'Fetch page'}
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  We fetch the page server-side, strip HTML to plain text,
+                  and use the page title as the source label (you can edit it).
+                </p>
+              </div>
+              {parseStatus && (
+                <p className="text-xs text-umc-700">{parseStatus}</p>
+              )}
+              {parsedText && (
+                <>
+                  <div>
+                    <label className="label">Source label</label>
+                    <input
+                      type="text"
+                      className="input"
+                      value={sourceLabel}
+                      onChange={(e) => setSourceLabel(e.target.value)}
+                    />
+                  </div>
+                  <details className="text-xs">
+                    <summary className="cursor-pointer text-gray-600 hover:text-gray-900">
+                      Preview fetched text ({parsedText.length.toLocaleString()} chars)
+                    </summary>
+                    <pre className="mt-1 max-h-48 overflow-y-auto bg-gray-50 border border-gray-200 rounded p-2 text-[11px] whitespace-pre-wrap font-mono">
+                      {parsedText.slice(0, 5000)}
+                      {parsedText.length > 5000 ? '\n…[truncated preview]' : ''}
+                    </pre>
+                  </details>
+                </>
+              )}
+            </>
+          )}
+
+          {(mode === 'txt' || mode === 'pdf') && (
             <>
               <div>
                 <label className="label">
@@ -304,6 +398,12 @@ export default function ResourceExtract() {
                   <p className="text-xs text-umc-700 mt-2">{parseStatus}</p>
                 )}
               </div>
+              {mode === 'pdf' && (
+                <p className="text-xs text-gray-500">
+                  Big PDF? <Link to="/resources/pdf-split" className="text-umc-700 underline">Split it first</Link>{' '}
+                  into smaller chunks for easier extraction.
+                </p>
+              )}
               {parsedText && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-gray-600 hover:text-gray-900">
@@ -370,6 +470,43 @@ export default function ResourceExtract() {
                 </select>
               </label>
             </div>
+          </div>
+
+          {/* Bulk-select buttons. Select all / none, plus per-type
+              shortcuts. The per-type buttons turn ON proposals of that
+              type and turn OFF the rest, giving "show me only the
+              quotes" type behavior. */}
+          <div className="card flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-gray-500 uppercase tracking-wide mr-1">
+              Select:
+            </span>
+            <BulkBtn onClick={() => setProposals((ps) => ps.map((p) => ({ ...p, checked: true })))}>
+              All ({proposals.length})
+            </BulkBtn>
+            <BulkBtn onClick={() => setProposals((ps) => ps.map((p) => ({ ...p, checked: false })))}>
+              None
+            </BulkBtn>
+            <span className="text-gray-300 mx-1">·</span>
+            {TYPE_OPTIONS.map((t) => {
+              const count = proposals.filter((p) => p.resource_type === t).length;
+              if (count === 0) return null;
+              return (
+                <BulkBtn
+                  key={t}
+                  onClick={() =>
+                    setProposals((ps) =>
+                      ps.map((p) => ({ ...p, checked: p.resource_type === t }))
+                    )
+                  }
+                  title={`Check only ${t} proposals (uncheck the rest)`}
+                >
+                  Only {t} ({count})
+                </BulkBtn>
+              );
+            })}
+            <span className="ml-auto text-gray-500">
+              {proposals.filter((p) => p.checked).length} / {proposals.length} checked
+            </span>
           </div>
 
           <ul className="space-y-3">
@@ -518,5 +655,18 @@ export default function ResourceExtract() {
         </div>
       )}
     </div>
+  );
+}
+
+function BulkBtn({ children, onClick, title }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      className="text-xs px-2 py-0.5 rounded border border-gray-300 bg-white hover:border-umc-700 hover:text-umc-900 text-gray-700"
+    >
+      {children}
+    </button>
   );
 }
