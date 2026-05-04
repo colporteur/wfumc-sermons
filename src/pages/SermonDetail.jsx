@@ -1747,8 +1747,25 @@ function ManuscriptCard({ sermon, setSermon }) {
     setUploadError(null);
     setUploadNote(null);
     try {
-      const mammoth =
-        (await import('mammoth')).default ?? (await import('mammoth'));
+      // Lazy-load mammoth so it doesn't bloat the initial bundle. The
+      // double-import below is a guard for ESM/CJS interop differences.
+      let mammothModule;
+      try {
+        mammothModule = await import('mammoth');
+      } catch (importErr) {
+        // This usually means the app was redeployed since this page
+        // loaded, and the old chunk filename no longer exists on the
+        // server. Tell the user what to do instead of leaking the raw
+        // browser error.
+        // eslint-disable-next-line no-console
+        console.warn('mammoth dynamic import failed:', importErr);
+        setUploadError(
+          "Couldn't load the Word-doc parser. The app updated since this page loaded — " +
+            'please refresh the page (Ctrl+Shift+R / Cmd+Shift+R) and try again.'
+        );
+        return;
+      }
+      const mammoth = mammothModule.default ?? mammothModule;
       const arrayBuffer = await file.arrayBuffer();
       const result = await mammoth.extractRawText({ arrayBuffer });
       const text = (result?.value ?? '').trim();
