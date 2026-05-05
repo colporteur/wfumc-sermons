@@ -4,12 +4,14 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import {
   DEFAULT_PRINT_PREFS,
+  SERMON_MANUSCRIPT_PRESET,
   COMMON_PRINT_FONTS,
   PAGE_NUMBER_POSITIONS,
   SCRIPTURE_FORMATS,
+  MANUSCRIPT_MARKERS,
   fetchPrintPrefs,
   savePrintPrefs,
-  renderHeaderTokens,
+  renderTokens,
 } from '../lib/printPreferences';
 
 // /settings/print — global formatting defaults the docx + pptx
@@ -26,8 +28,6 @@ export default function PrintPreferences() {
   const [savedAt, setSavedAt] = useState(null);
   const [saving, setSaving] = useState(false);
 
-  // Form state. Initialized to DEFAULT_PRINT_PREFS so the preview
-  // works immediately even before the user has saved anything.
   const [form, setForm] = useState(DEFAULT_PRINT_PREFS);
 
   useEffect(() => {
@@ -39,7 +39,6 @@ export default function PrintPreferences() {
       try {
         const row = await fetchPrintPrefs(user.id);
         if (!cancelled && row) {
-          // Merge so any fields the row doesn't have keep the defaults.
           setForm({ ...DEFAULT_PRINT_PREFS, ...row });
         }
       } catch (e) {
@@ -74,12 +73,34 @@ export default function PrintPreferences() {
   const handleResetDefaults = () => {
     if (
       !window.confirm(
-        'Reset all print preferences to the defaults? This will not save until you click "Save".'
+        'Reset all print preferences to the basic defaults? This will not save until you click "Save".'
       )
     ) {
       return;
     }
-    setForm(DEFAULT_PRINT_PREFS);
+    // Preserve church name across reset — that's a personal value, not
+    // a formatting choice.
+    setForm({
+      ...DEFAULT_PRINT_PREFS,
+      default_church_name: form.default_church_name,
+    });
+  };
+
+  const handleApplyPreset = () => {
+    if (
+      form.font_family !== DEFAULT_PRINT_PREFS.font_family &&
+      !window.confirm(
+        'Apply the sermon manuscript preset (Bookman Old Style 18pt double-spaced, italic centered header/footer, no title in body)? This overwrites your current settings (you can still tweak before saving).'
+      )
+    ) {
+      return;
+    }
+    setForm({
+      ...form,
+      ...SERMON_MANUSCRIPT_PRESET,
+      // Don't overwrite the church name with the preset (which is empty).
+      default_church_name: form.default_church_name,
+    });
   };
 
   if (loading) return <LoadingSpinner label="Loading print preferences…" />;
@@ -99,6 +120,28 @@ export default function PrintPreferences() {
           per sermon at export time. The preview on the right updates as
           you type.
         </p>
+      </div>
+
+      {/* Preset / shortcut bar */}
+      <div className="rounded-md border border-umc-200 bg-umc-50/40 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-sm text-umc-900 font-medium">
+            Sermon manuscript preset
+          </p>
+          <p className="text-xs text-gray-600 mt-0.5">
+            Bookman Old Style 18pt, double-spaced, US Letter with 1″
+            margins, italic centered title in the header, italic centered
+            "{`{date} – {church} – {scripture}`}" in the footer, no title
+            block in the body.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleApplyPreset}
+          className="btn-secondary text-sm whitespace-nowrap"
+        >
+          Apply preset
+        </button>
       </div>
 
       {error && (
@@ -160,55 +203,122 @@ export default function PrintPreferences() {
 
           <FormSection title="Margins (inches)">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Field label="Top">
+              {[
+                ['margin_top_in', 'Top'],
+                ['margin_bottom_in', 'Bottom'],
+                ['margin_left_in', 'Left'],
+                ['margin_right_in', 'Right'],
+              ].map(([key, label]) => (
+                <Field key={key} label={label}>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.25"
+                    max="3"
+                    value={form[key]}
+                    onChange={(e) => update(key, Number(e.target.value))}
+                    className="input w-full"
+                  />
+                </Field>
+              ))}
+            </div>
+          </FormSection>
+
+          <FormSection title="Word header (top of every page)">
+            <Field label="Header text">
+              <input
+                type="text"
+                value={form.header_content}
+                onChange={(e) => update('header_content', e.target.value)}
+                placeholder="e.g. {title}"
+                className="input w-full"
+              />
+              <TokenHelp />
+            </Field>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Alignment">
+                <select
+                  value={form.header_alignment}
+                  onChange={(e) => update('header_alignment', e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </Field>
+              <Field label="Size (pt)">
                 <input
                   type="number"
-                  step="0.05"
-                  min="0.25"
-                  max="3"
-                  value={form.margin_top_in}
-                  onChange={(e) => update('margin_top_in', Number(e.target.value))}
+                  min="6"
+                  max="24"
+                  value={form.header_size_pt}
+                  onChange={(e) =>
+                    update('header_size_pt', Math.round(Number(e.target.value)))
+                  }
                   className="input w-full"
                 />
               </Field>
-              <Field label="Bottom">
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.25"
-                  max="3"
-                  value={form.margin_bottom_in}
-                  onChange={(e) => update('margin_bottom_in', Number(e.target.value))}
-                  className="input w-full"
-                />
-              </Field>
-              <Field label="Left">
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.25"
-                  max="3"
-                  value={form.margin_left_in}
-                  onChange={(e) => update('margin_left_in', Number(e.target.value))}
-                  className="input w-full"
-                />
-              </Field>
-              <Field label="Right">
-                <input
-                  type="number"
-                  step="0.05"
-                  min="0.25"
-                  max="3"
-                  value={form.margin_right_in}
-                  onChange={(e) => update('margin_right_in', Number(e.target.value))}
-                  className="input w-full"
-                />
+              <Field label="Italic?">
+                <label className="inline-flex items-center gap-2 text-sm pt-2">
+                  <input
+                    type="checkbox"
+                    checked={form.header_italic}
+                    onChange={(e) => update('header_italic', e.target.checked)}
+                  />
+                  Italic
+                </label>
               </Field>
             </div>
           </FormSection>
 
-          <FormSection title="Header & page numbers">
-            <Field label="Page numbers">
+          <FormSection title="Word footer (bottom of every page)">
+            <Field label="Footer text">
+              <textarea
+                value={form.footer_content}
+                onChange={(e) => update('footer_content', e.target.value)}
+                rows={2}
+                placeholder="e.g. {date} – {church} – {scripture}"
+                className="input w-full"
+              />
+              <TokenHelp />
+            </Field>
+            <div className="grid grid-cols-3 gap-3">
+              <Field label="Alignment">
+                <select
+                  value={form.footer_alignment}
+                  onChange={(e) => update('footer_alignment', e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="left">Left</option>
+                  <option value="center">Center</option>
+                  <option value="right">Right</option>
+                </select>
+              </Field>
+              <Field label="Size (pt)">
+                <input
+                  type="number"
+                  min="6"
+                  max="24"
+                  value={form.footer_size_pt}
+                  onChange={(e) =>
+                    update('footer_size_pt', Math.round(Number(e.target.value)))
+                  }
+                  className="input w-full"
+                />
+              </Field>
+              <Field label="Italic?">
+                <label className="inline-flex items-center gap-2 text-sm pt-2">
+                  <input
+                    type="checkbox"
+                    checked={form.footer_italic}
+                    onChange={(e) => update('footer_italic', e.target.checked)}
+                  />
+                  Italic
+                </label>
+              </Field>
+            </div>
+            <Field label="Page number position">
               <select
                 value={form.page_number_position}
                 onChange={(e) => update('page_number_position', e.target.value)}
@@ -220,24 +330,34 @@ export default function PrintPreferences() {
                   </option>
                 ))}
               </select>
-            </Field>
-            <Field label="Header text">
-              <input
-                type="text"
-                value={form.header_content}
-                onChange={(e) => update('header_content', e.target.value)}
-                placeholder="e.g. {title} — {scripture}"
-                className="input w-full"
-              />
               <p className="text-xs text-gray-500 mt-1">
-                Tokens: <code>{'{title}'}</code>, <code>{'{scripture}'}</code>,{' '}
-                <code>{'{date}'}</code>, <code>{'{page}'}</code>. Leave blank
-                for no header.
+                Word renders the page number in its own paragraph in the
+                header or footer area, separate from the text above.
               </p>
             </Field>
           </FormSection>
 
           <FormSection title="Body content">
+            <Field label="Default church name (for the {church} token)">
+              <input
+                type="text"
+                value={form.default_church_name || ''}
+                onChange={(e) => update('default_church_name', e.target.value)}
+                placeholder="e.g. Wedowee First UMC"
+                className="input w-full"
+              />
+            </Field>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={form.title_in_body}
+                onChange={(e) => update('title_in_body', e.target.checked)}
+              />
+              Render the title at the top of the body
+              <span className="text-xs text-gray-500">
+                (turn off when the title lives in the header)
+              </span>
+            </label>
             <label className="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
@@ -245,10 +365,16 @@ export default function PrintPreferences() {
                 onChange={(e) =>
                   update('show_scripture_reference', e.target.checked)
                 }
+                disabled={!form.title_in_body}
               />
               Show scripture reference under the title
+              {!form.title_in_body && (
+                <span className="text-xs text-gray-400">
+                  (only available with title in body)
+                </span>
+              )}
             </label>
-            <Field label="Scripture passage formatting">
+            <Field label="Scripture passage formatting (in body)">
               <select
                 value={form.scripture_format}
                 onChange={(e) => update('scripture_format', e.target.value)}
@@ -260,10 +386,6 @@ export default function PrintPreferences() {
                   </option>
                 ))}
               </select>
-              <p className="text-xs text-gray-500 mt-1">
-                Applies to scripture quoted in the body. Doesn't affect the
-                title-block reference above.
-              </p>
             </Field>
             <label className="flex items-center gap-2 text-sm">
               <input
@@ -283,7 +405,7 @@ export default function PrintPreferences() {
               onClick={handleResetDefaults}
               className="text-xs text-gray-600 hover:text-gray-900 underline"
             >
-              Reset to defaults
+              Reset to basic defaults
             </button>
             <div className="flex items-center gap-3">
               {savedAt && (
@@ -306,6 +428,9 @@ export default function PrintPreferences() {
         {/* Live preview */}
         <PrintPreview prefs={form} />
       </div>
+
+      {/* Manuscript markers reference */}
+      <MarkersReference />
     </div>
   );
 }
@@ -332,13 +457,21 @@ function Field({ label, children }) {
   );
 }
 
+function TokenHelp() {
+  return (
+    <p className="text-xs text-gray-500 mt-1">
+      Tokens: <code>{'{title}'}</code>, <code>{'{scripture}'}</code>,{' '}
+      <code>{'{date}'}</code>, <code>{'{church}'}</code>,{' '}
+      <code>{'{page}'}</code>. Leave blank for nothing.
+    </p>
+  );
+}
+
 // Live preview of a single 8.5×11 page rendered with the chosen
-// settings. Scaled to fit the column. This is an HTML approximation,
-// not exact docx output, but it's close enough that the pastor can
-// pick a font and size that read well at the pulpit.
+// settings. Header is positioned in the top margin area, footer in the
+// bottom margin area, body inside the body margins. Scaled to fit the
+// column. HTML approximation, not exact docx output.
 function PrintPreview({ prefs }) {
-  // 8.5 × 11 inch page at 72 dpi = 612 × 792 px. We scale down to fit
-  // the column (target ~480px wide) and let CSS handle the rest.
   const scale = 0.55;
   const pageWidthIn = 8.5;
   const pageHeightIn = 11.0;
@@ -347,28 +480,46 @@ function PrintPreview({ prefs }) {
   const h = pageHeightIn * pxPerIn;
 
   const ctx = {
-    title: 'The Word Made Flesh',
-    scripture: 'John 1:1–14',
-    date: 'December 24, 2026',
+    title: 'How Many of These 15 Marks of the True Church Do You Have?',
+    scripture: 'Acts 2:42–47',
+    date: 'April 29, 2026',
+    church: prefs.default_church_name || 'Your Church',
   };
-  const headerText = renderHeaderTokens(prefs.header_content, ctx);
+  const headerText = renderTokens(prefs.header_content, ctx);
+  const footerText = renderTokens(prefs.footer_content, ctx);
 
-  // Position the header banner along the top edge if any *_top_* page
-  // numbers are chosen — and the page-number element along whichever
-  // edge the pastor selected.
-  const pageNumberStyle = pageNumberPositionStyle(prefs.page_number_position);
-
-  // Body styles applied to the manuscript area.
   const bodyStyle = {
     fontFamily: `"${prefs.font_family}", serif`,
-    fontSize: `${prefs.font_size_pt}pt`,
+    fontSize: `${prefs.font_size_pt * scale}pt`,
     lineHeight: prefs.line_spacing,
   };
 
-  // Scripture sample paragraph styling.
+  const headerStyle = {
+    textAlign: prefs.header_alignment,
+    fontStyle: prefs.header_italic ? 'italic' : 'normal',
+    fontFamily: `"${prefs.font_family}", serif`,
+    fontSize: `${prefs.header_size_pt * scale}pt`,
+    color: '#666',
+  };
+  const footerStyle = {
+    textAlign: prefs.footer_alignment,
+    fontStyle: prefs.footer_italic ? 'italic' : 'normal',
+    fontFamily: `"${prefs.font_family}", serif`,
+    fontSize: `${prefs.footer_size_pt * scale}pt`,
+    color: '#666',
+  };
+
+  const pageNumberStyle = pageNumberPositionStyle(prefs.page_number_position);
+
+  // Scripture sample paragraph styling (body scripture, not title block).
   const scriptureStyle =
     prefs.scripture_format === 'block_indent'
-      ? { marginLeft: '0.5in', marginRight: '0.5in', marginTop: '0.2em', marginBottom: '0.2em' }
+      ? {
+          marginLeft: `${0.4 * pxPerIn * scale}px`,
+          marginRight: `${0.4 * pxPerIn * scale}px`,
+          marginTop: '0.2em',
+          marginBottom: '0.2em',
+        }
       : prefs.scripture_format === 'italic'
       ? { fontStyle: 'italic' }
       : {};
@@ -387,33 +538,46 @@ function PrintPreview({ prefs }) {
       >
         <div
           className="bg-white shadow-md mx-auto relative"
-          style={{
-            width: w * scale,
-            height: h * scale,
-            transform: `scale(${1})`,
-          }}
+          style={{ width: w * scale, height: h * scale }}
         >
-          {/* Header band */}
+          {/* Header band — sits in the top margin area, above the body */}
           {headerText && (
             <div
-              className="absolute left-0 right-0 text-gray-500 text-center"
+              className="absolute"
               style={{
                 top: 0.4 * pxPerIn * scale,
-                fontFamily: bodyStyle.fontFamily,
-                fontSize: `${prefs.font_size_pt * 0.7 * scale}pt`,
+                left: prefs.margin_left_in * pxPerIn * scale,
+                right: prefs.margin_right_in * pxPerIn * scale,
+                ...headerStyle,
               }}
             >
               {headerText}
             </div>
           )}
-          {/* Page number */}
+          {/* Footer band — sits in the bottom margin area, below the body */}
+          {footerText && (
+            <div
+              className="absolute whitespace-pre-line"
+              style={{
+                bottom: 0.4 * pxPerIn * scale,
+                left: prefs.margin_left_in * pxPerIn * scale,
+                right: prefs.margin_right_in * pxPerIn * scale,
+                ...footerStyle,
+              }}
+            >
+              {footerText}
+            </div>
+          )}
+          {/* Page number — separate paragraph in header or footer */}
           {prefs.page_number_position !== 'none' && (
             <div
-              className="absolute text-gray-500"
+              className="absolute"
               style={{
                 ...pageNumberStyle,
-                fontFamily: bodyStyle.fontFamily,
-                fontSize: `${prefs.font_size_pt * 0.7 * scale}pt`,
+                fontFamily: `"${prefs.font_family}", serif`,
+                fontSize: `${(prefs.footer_size_pt || 12) * scale}pt`,
+                fontStyle: prefs.footer_italic ? 'italic' : 'normal',
+                color: '#666',
               }}
             >
               1
@@ -421,62 +585,98 @@ function PrintPreview({ prefs }) {
           )}
           {/* Body inside margins */}
           <div
-            className="absolute"
+            className="absolute overflow-hidden"
             style={{
               top: prefs.margin_top_in * pxPerIn * scale,
               bottom: prefs.margin_bottom_in * pxPerIn * scale,
               left: prefs.margin_left_in * pxPerIn * scale,
               right: prefs.margin_right_in * pxPerIn * scale,
               ...bodyStyle,
-              fontSize: `${prefs.font_size_pt * scale}pt`,
-              overflow: 'hidden',
             }}
           >
-            <div
+            {prefs.title_in_body && (
+              <>
+                <div
+                  style={{
+                    fontWeight: 'bold',
+                    fontSize: `${prefs.font_size_pt * 1.4 * scale}pt`,
+                    marginBottom: '0.4em',
+                  }}
+                >
+                  {ctx.title}
+                </div>
+                {prefs.show_scripture_reference && (
+                  <div
+                    style={{
+                      fontStyle: 'italic',
+                      color: '#555',
+                      marginBottom: '1em',
+                      fontSize: `${prefs.font_size_pt * 0.9 * scale}pt`,
+                    }}
+                  >
+                    {ctx.scripture}
+                  </div>
+                )}
+              </>
+            )}
+            {/* Sample body — shows the special markers Todd uses, with
+                the same colors/highlights the docx exporter will apply */}
+            <p
               style={{
+                textAlign: 'center',
                 fontWeight: 'bold',
-                fontSize: `${prefs.font_size_pt * 1.4 * scale}pt`,
+                color: '#EE0000',
+                background: '#00FF00',
                 marginBottom: '0.4em',
+                padding: '0 0.3em',
+                display: 'inline-block',
+                width: '100%',
+                boxSizing: 'border-box',
               }}
             >
-              {ctx.title}
-            </div>
-            {prefs.show_scripture_reference && (
-              <div
+              Don't Read Scripture First
+            </p>
+            <p
+              style={{
+                fontWeight: 'bold',
+                color: '#EE0000',
+                background: '#00FF00',
+                marginBottom: '0.6em',
+                padding: '0 0.3em',
+                display: 'inline-block',
+              }}
+            >
+              Read Acts 2:42–47
+            </p>
+            <p style={{ marginBottom: '0.6em' }}>
+              Today we look at fifteen marks of the true church and ask
+              honestly which ones we have. {' '}
+              <span
                 style={{
-                  fontStyle: 'italic',
-                  color: '#555',
-                  marginBottom: '1em',
-                  fontSize: `${prefs.font_size_pt * 0.9 * scale}pt`,
+                  fontWeight: 'bold',
+                  color: '#FF0000',
+                  background: '#FFFF00',
+                  padding: '0 0.2em',
                 }}
               >
-                {ctx.scripture}
-              </div>
-            )}
-            <p style={{ marginBottom: '0.6em' }}>
-              In the beginning was the Word, and the gospel of John opens
-              not with a manger but with a cosmos. Before there was a
-              shepherd or a star, there was the Word — eternal, particular,
-              with God and being God.
+                &lt;SLIDE #1 – 15 Marks of the True Church&gt;
+              </span>{' '}
+              The early church in Acts wasn't perfect, but it was
+              recognizable, and Luke gives us a portrait worth holding up
+              to a mirror.
             </p>
             <p style={scriptureStyle}>
-              "And the Word became flesh and dwelt among us, and we have
-              seen his glory, glory as of the only Son from the Father,
-              full of grace and truth."
-            </p>
-            <p style={{ marginTop: '0.6em' }}>
-              That is the verse on which Christmas balances. Not the
-              softer verses about wonder or peace, lovely as they are,
-              but this hard claim that the Word — the speech of God,
-              the wisdom by which the world was made — moved into a
-              human address.
+              "And they devoted themselves to the apostles' teaching and
+              fellowship, to the breaking of bread and the prayers."
             </p>
           </div>
         </div>
       </div>
       <p className="text-xs text-gray-500 mt-2">
         Approximate preview. Final output goes through Word, which may
-        render fonts and spacing slightly differently.
+        render fonts and spacing slightly differently. The colored marker
+        lines and slide tags above show the formatting the manuscript
+        exporter will apply automatically when it sees those patterns.
       </p>
     </div>
   );
@@ -501,4 +701,43 @@ function pageNumberPositionStyle(pos) {
     default:
       return {};
   }
+}
+
+// Standing reference panel below the form. Documents the special
+// inline markers the docx exporter recognizes and the formatting it
+// applies to each. The Sermon Workspace will also feed this list to
+// Claude so generated drafts use the conventions correctly.
+function MarkersReference() {
+  return (
+    <div className="card space-y-3">
+      <div>
+        <h2 className="font-serif text-lg text-umc-900">
+          Sermon manuscript markers
+        </h2>
+        <p className="text-sm text-gray-600 mt-1">
+          The Word exporter recognizes the patterns below in your
+          manuscript text and applies the formatting shown. You don't
+          have to format anything by hand — just type the marker.
+        </p>
+      </div>
+      <ul className="divide-y divide-gray-100">
+        {MANUSCRIPT_MARKERS.map((m) => (
+          <li key={m.id} className="py-3 grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <p className="text-sm font-medium text-umc-900">{m.label}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{m.pattern}</p>
+            </div>
+            <div className="sm:col-span-2 text-xs text-gray-700">
+              {m.formatting}
+            </div>
+          </li>
+        ))}
+      </ul>
+      <p className="text-xs text-gray-500 italic">
+        These conventions are baked into the exporter. Future versions of
+        the Sermon Workspace will also tell Claude about them so that
+        generated drafts use the same markers in the same way.
+      </p>
+    </div>
+  );
 }
