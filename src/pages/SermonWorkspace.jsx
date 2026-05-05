@@ -410,6 +410,72 @@ export default function SermonWorkspace() {
     if (sermon?.id) clearChatStorage(sermon.id);
   };
 
+  // Index of the most-recent un-reverted assistant turn that has a
+  // manuscript-before snapshot. Only this turn shows a "Revert" button —
+  // older turns can be rolled back via the sermon_revisions snapshots
+  // taken at each turn (visible on the SermonDetail Past Versions panel).
+  const mostRecentRevertableIdx = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (
+        m.role === 'assistant' &&
+        m.manuscriptBefore !== undefined &&
+        !m.reverted
+      ) {
+        return i;
+      }
+    }
+    return -1;
+  })();
+
+  const handleRevertTurn = async (idx) => {
+    const m = messages[idx];
+    if (!m || m.manuscriptBefore === undefined || !sermon?.id) return;
+
+    const handEdited = manuscript !== (m.manuscriptAfter || '');
+    const turnLabel = m.turnNumber ? `turn ${m.turnNumber}` : 'this turn';
+    const confirmMsg = handEdited
+      ? `Revert to the manuscript from BEFORE ${turnLabel}?\n\n` +
+        `WARNING: You have hand-edited the manuscript since this turn. Those edits will be lost.\n\n` +
+        `(The pre-revision snapshot was already saved as a "Workspace ${turnLabel}" entry on the sermon's Past Versions panel, so you can restore from there too.)`
+      : `Revert to the manuscript from BEFORE ${turnLabel}?\n\n` +
+        `Claude's revision will be undone. The pre-revision snapshot was saved as a "Workspace ${turnLabel}" entry, so this is recoverable.`;
+    if (!window.confirm(confirmMsg)) return;
+
+    setError(null);
+    try {
+      const reverted = m.manuscriptBefore || '';
+      // Optimistically update the live state.
+      setManuscript(reverted);
+      // Persist immediately so a refresh keeps the rollback.
+      const { data, error: err } = await withTimeout(
+        supabase
+          .from('sermons')
+          .update({ manuscript_text: reverted })
+          .eq('id', sermon.id)
+          .select('*')
+          .single()
+      );
+      if (err) throw err;
+      setSermon(data);
+      setSavedManuscript(data.manuscript_text || '');
+      setSavedAt(new Date());
+
+      // Mark the reverted turn + append a system note in the chat trail.
+      setMessages((prev) => [
+        ...prev.map((x, i) => (i === idx ? { ...x, reverted: true } : x)),
+        {
+          role: 'assistant',
+          kind: 'note',
+          content: `Reverted ${turnLabel}. Manuscript restored to its pre-revision state.`,
+          ts: Date.now(),
+        },
+      ]);
+    } catch (e) {
+      setError(e.message || String(e));
+    }
+  };
+
   if (loading) return <LoadingSpinner label="Loading workspace…" />;
   if (!sermon) {
     return (
@@ -515,6 +581,11 @@ export default function SermonWorkspace() {
                     ? () => setDiffForIndex(i)
                     : null
                 }
+                onRevert={
+                  i === mostRecentRevertableIdx
+                    ? () => handleRevertTurn(i)
+                    : null
+                }
               />
             ))}
             {sending && (
@@ -606,7 +677,7 @@ function countWords(s) {
   return s.trim().split(/\s+/).length;
 }
 
-function ChatBubble({ message, onViewDiff }) {
+function ChatBubble({ message, onViewDiff, onRevert }) {
   if (message.kind === 'note') {
     return (
       <div className="text-xs text-gray-600 italic bg-gray-50 border border-gray-200 rounded px-2 py-1">
@@ -617,27 +688,46 @@ function ChatBubble({ message, onViewDiff }) {
   const isUser = message.role === 'user';
   const hasResources =
     Array.isArray(message.resourceTitles) && message.resourceTitles.length > 0;
+  const isReverted = Boolean(message.reverted);
   return (
     <div
       className={
         'rounded px-3 py-2 text-sm whitespace-pre-wrap ' +
         (isUser
           ? 'bg-umc-50 border border-umc-200 text-umc-900'
-          : 'bg-gray-50 border border-gray-200 text-gray-800')
+          : 'bg-gray-50 border border-gray-200 text-gray-800') +
+        (isReverted ? ' opacity-60' : '')
       }
     >
       <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5 flex items-baseline justify-between gap-2">
-        <span>{isUser ? 'You' : 'Claude'}</span>
-        {onViewDiff && (
-          <button
-            type="button"
-            onClick={onViewDiff}
-            className="text-[10px] normal-case tracking-normal text-umc-700 hover:text-umc-900 underline"
-            title="Show what changed between this turn's input manuscript and Claude's revised manuscript."
-          >
-            View diff
-          </button>
-        )}
+        <span>
+          {isUser ? 'You' : 'Claude'}
+          {isReverted && (
+            <span className="ml-2 text-red-700 font-semibold">Reverted</span>
+          )}
+        </span>
+        <span className="flex items-baseline gap-3">
+          {onViewDiff && (
+            <button
+              type="button"
+              onClick={onViewDiff}
+              className="text-[10px] normal-case tracking-normal text-umc-700 hover:text-umc-900 underline"
+              title="Show what changed between this turn's input manuscript and Claude's revised manuscript."
+            >
+              View diff
+            </button>
+          )}
+          {onRevert && !isReverted && (
+            <button
+              type="button"
+              onClick={onRevert}
+              className="text-[10px] normal-case tracking-normal text-red-700 hover:text-red-900 underline"
+              title="Restore the manuscript to its state before this turn. The pre-revision version is also saved as a Past Versions snapshot."
+            >
+              Revert
+            </button>
+          )}
+        </span>
       </div>
       {message.content}
       {hasResources && (
