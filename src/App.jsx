@@ -17,6 +17,7 @@ import LiturgyList from './pages/LiturgyList.jsx';
 import LiturgyDetail from './pages/LiturgyDetail.jsx';
 import LiturgyImport from './pages/LiturgyImport.jsx';
 import LiturgyReview from './pages/LiturgyReview.jsx';
+import VoiceGuide from './pages/VoiceGuide.jsx';
 
 export default function App() {
   return (
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="/liturgies/import" element={<LiturgyImport />} />
         <Route path="/liturgies/review" element={<LiturgyReview />} />
         <Route path="/liturgies/:id" element={<LiturgyDetail />} />
+        <Route path="/settings/voice" element={<VoiceGuide />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>
