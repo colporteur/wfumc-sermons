@@ -9,6 +9,7 @@ import { listMyLibraries } from '../lib/libraries';
 import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
+import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
@@ -35,6 +36,7 @@ export default function SermonDetail() {
   const [linkedResources, setLinkedResources] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [showMerge, setShowMerge] = useState(false);
   // Persist the metadata edit draft to sessionStorage so accidental
   // navigation doesn't lose changes. Key includes user.id to avoid
   // cross-user contamination on shared machines.
@@ -139,6 +141,8 @@ export default function SermonDetail() {
       major_stories: sermon.major_stories ?? '',
       notes: sermon.notes ?? '',
       preached_at: sermon.preached_at ?? '',
+      // Comma-separated string for editing; converted to text[] on save.
+      previous_titles: (sermon.previous_titles ?? []).join(', '),
     });
     setEditing(true);
     setDraftRestored(false);
@@ -214,6 +218,10 @@ export default function SermonDetail() {
       const strengthNum = draft.strength.trim()
         ? Number(draft.strength)
         : null;
+      const previousTitlesArray = (draft.previous_titles || '')
+        .split(',')
+        .map((t) => t.trim())
+        .filter(Boolean);
       const { data, error: err } = await withTimeout(
         supabase
           .from('sermons')
@@ -231,6 +239,7 @@ export default function SermonDetail() {
             major_stories: draft.major_stories.trim() || null,
             notes: draft.notes.trim() || null,
             preached_at: draft.preached_at || null,
+            previous_titles: previousTitlesArray,
           })
           .eq('id', id)
           .select()
@@ -357,6 +366,22 @@ export default function SermonDetail() {
                 onChange={(e) => setDraft({ ...draft, title: e.target.value })}
                 placeholder='e.g., "Walking with Jesus"'
               />
+            </div>
+            <div>
+              <label className="label">Previous titles (comma-separated)</label>
+              <input
+                type="text"
+                className="input"
+                value={draft.previous_titles ?? ''}
+                onChange={(e) =>
+                  setDraft({ ...draft, previous_titles: e.target.value })
+                }
+                placeholder='Old names this sermon went by, e.g., "Walking by Faith, Walking the Talk"'
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Useful when you rename a sermon — the old name(s) stay
+                searchable. Multiple values get auto-deduped.
+              </p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
@@ -502,6 +527,14 @@ export default function SermonDetail() {
                     </span>
                   )}
                 </div>
+                {sermon.previous_titles?.length > 0 && (
+                  <p
+                    className="text-xs text-gray-500 italic mt-1"
+                    title="This sermon was previously named these things"
+                  >
+                    Previously: {sermon.previous_titles.join(', ')}
+                  </p>
+                )}
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-600">
                   {sermon.scripture_reference && (
                     <span>{sermon.scripture_reference}</span>
@@ -537,13 +570,23 @@ export default function SermonDetail() {
                   )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={startEdit}
-                className="btn-secondary text-sm whitespace-nowrap"
-              >
-                Edit metadata
-              </button>
+              <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={startEdit}
+                  className="btn-secondary text-sm whitespace-nowrap"
+                >
+                  Edit metadata
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowMerge(true)}
+                  className="text-xs text-gray-500 hover:text-gray-800 underline whitespace-nowrap"
+                  title="Combine this sermon with another (this one becomes a previous title on the other)"
+                >
+                  Merge into another sermon…
+                </button>
+              </div>
             </div>
             {sermon.major_stories && (
               <div className="mt-4 pt-4 border-t border-gray-100">
@@ -660,6 +703,13 @@ export default function SermonDetail() {
 
       {/* Manuscript */}
       <ManuscriptCard sermon={sermon} setSermon={setSermon} />
+
+      {showMerge && (
+        <MergeSermonsModal
+          source={sermon}
+          onClose={() => setShowMerge(false)}
+        />
+      )}
     </div>
   );
 }
