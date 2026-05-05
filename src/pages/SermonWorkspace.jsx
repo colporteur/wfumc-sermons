@@ -13,6 +13,7 @@ import {
   buildResourcesContext,
 } from '../lib/workspaceResources';
 import WorkspaceResources from '../components/WorkspaceResources.jsx';
+import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -114,6 +115,10 @@ export default function SermonWorkspace() {
   // Resources selected for the next Claude turn. Persisted by ID in
   // sessionStorage; rehydrated to full rows on mount.
   const [selectedResources, setSelectedResources] = useState([]);
+
+  // Which assistant turn (chat message index) to show in the diff modal.
+  // null = closed.
+  const [diffForIndex, setDiffForIndex] = useState(null);
 
   // Composer state
   const [draftInstruction, setDraftInstruction] = useState('');
@@ -337,6 +342,10 @@ export default function SermonWorkspace() {
           ? `+${delta} words (${oldWords} → ${newWords})`
           : `${delta} words (${oldWords} → ${newWords})`;
 
+      // Capture before/after on this assistant turn so the diff viewer
+      // can show exactly what Claude changed. `manuscript` here is the
+      // pre-revision text (we haven't called setManuscript yet).
+      const turnBefore = manuscript;
       setManuscript(revised);
       setMessages((prev) => [
         ...prev,
@@ -344,6 +353,9 @@ export default function SermonWorkspace() {
           role: 'assistant',
           content: `Revised manuscript replaced. ${deltaLabel}.`,
           ts: Date.now(),
+          manuscriptBefore: turnBefore,
+          manuscriptAfter: revised,
+          turnNumber,
         },
       ]);
 
@@ -495,7 +507,15 @@ export default function SermonWorkspace() {
               </p>
             )}
             {messages.map((m, i) => (
-              <ChatBubble key={i} message={m} />
+              <ChatBubble
+                key={i}
+                message={m}
+                onViewDiff={
+                  m.role === 'assistant' && m.manuscriptAfter !== undefined
+                    ? () => setDiffForIndex(i)
+                    : null
+                }
+              />
             ))}
             {sending && (
               <div className="text-sm text-gray-500 italic flex items-center gap-2">
@@ -555,6 +575,26 @@ export default function SermonWorkspace() {
           />
         </div>
       </div>
+
+      <WorkspaceDiffModal
+        open={diffForIndex !== null}
+        onClose={() => setDiffForIndex(null)}
+        title={
+          diffForIndex !== null && messages[diffForIndex]?.turnNumber
+            ? `Diff: turn ${messages[diffForIndex].turnNumber}`
+            : 'Manuscript diff'
+        }
+        beforeText={
+          diffForIndex !== null
+            ? messages[diffForIndex]?.manuscriptBefore || ''
+            : ''
+        }
+        afterText={
+          diffForIndex !== null
+            ? messages[diffForIndex]?.manuscriptAfter || ''
+            : ''
+        }
+      />
     </div>
   );
 }
@@ -566,7 +606,7 @@ function countWords(s) {
   return s.trim().split(/\s+/).length;
 }
 
-function ChatBubble({ message }) {
+function ChatBubble({ message, onViewDiff }) {
   if (message.kind === 'note') {
     return (
       <div className="text-xs text-gray-600 italic bg-gray-50 border border-gray-200 rounded px-2 py-1">
@@ -586,8 +626,18 @@ function ChatBubble({ message }) {
           : 'bg-gray-50 border border-gray-200 text-gray-800')
       }
     >
-      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5">
-        {isUser ? 'You' : 'Claude'}
+      <div className="text-[10px] uppercase tracking-wide text-gray-500 mb-0.5 flex items-baseline justify-between gap-2">
+        <span>{isUser ? 'You' : 'Claude'}</span>
+        {onViewDiff && (
+          <button
+            type="button"
+            onClick={onViewDiff}
+            className="text-[10px] normal-case tracking-normal text-umc-700 hover:text-umc-900 underline"
+            title="Show what changed between this turn's input manuscript and Claude's revised manuscript."
+          >
+            View diff
+          </button>
+        )}
       </div>
       {message.content}
       {hasResources && (
