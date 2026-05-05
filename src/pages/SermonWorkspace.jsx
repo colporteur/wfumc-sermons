@@ -8,6 +8,11 @@ import {
   buildMarkersReferenceText,
 } from '../lib/claude';
 import { loadVoiceGuideForPrompt } from '../lib/voiceGuide';
+import {
+  fetchResourcesByIds,
+  buildResourcesContext,
+} from '../lib/workspaceResources';
+import WorkspaceResources from '../components/WorkspaceResources.jsx';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -32,6 +37,7 @@ import { loadVoiceGuideForPrompt } from '../lib/voiceGuide';
 
 const AUTOSAVE_DEBOUNCE_MS = 3000;
 const CHAT_STORAGE_PREFIX = 'wfumc-workspace-chat:';
+const RESOURCES_STORAGE_PREFIX = 'wfumc-workspace-resources:';
 
 function loadChat(sermonId) {
   try {
@@ -54,6 +60,27 @@ function saveChat(sermonId, messages) {
 function clearChatStorage(sermonId) {
   try {
     sessionStorage.removeItem(CHAT_STORAGE_PREFIX + sermonId);
+  } catch {
+    /* noop */
+  }
+}
+
+// Persist only the selected resource IDs (not the full rows) — on
+// rehydrate we re-query so a row edited in another tab is up to date.
+function loadResourceIds(sermonId) {
+  try {
+    const raw = sessionStorage.getItem(RESOURCES_STORAGE_PREFIX + sermonId);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function saveResourceIds(sermonId, ids) {
+  try {
+    sessionStorage.setItem(
+      RESOURCES_STORAGE_PREFIX + sermonId,
+      JSON.stringify(ids)
+    );
   } catch {
     /* noop */
   }
@@ -84,6 +111,10 @@ export default function SermonWorkspace() {
   const [hasVoiceGuide, setHasVoiceGuide] = useState(false);
   const markersReference = useMemo(() => buildMarkersReferenceText(), []);
 
+  // Resources selected for the next Claude turn. Persisted by ID in
+  // sessionStorage; rehydrated to full rows on mount.
+  const [selectedResources, setSelectedResources] = useState([]);
+
   // Composer state
   const [draftInstruction, setDraftInstruction] = useState('');
   const [sending, setSending] = useState(false);
@@ -104,7 +135,8 @@ export default function SermonWorkspace() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, voiceRes] = await Promise.all([
+        const storedResourceIds = loadResourceIds(id);
+        const [sermonRes, voiceRes, resourceRows] = await Promise.all([
           withTimeout(
             supabase
               .from('sermons')
@@ -114,6 +146,9 @@ export default function SermonWorkspace() {
               .single()
           ),
           loadVoiceGuideForPrompt(user.id),
+          storedResourceIds.length > 0
+            ? fetchResourcesByIds(storedResourceIds)
+            : Promise.resolve([]),
         ]);
         if (sermonRes.error) throw sermonRes.error;
         if (cancelled) return;
@@ -123,6 +158,7 @@ export default function SermonWorkspace() {
         setVoicePrompt(voiceRes.systemPrompt || '');
         setHasVoiceGuide(Boolean(voiceRes.guide));
         setMessages(loadChat(id));
+        setSelectedResources(resourceRows);
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -143,6 +179,11 @@ export default function SermonWorkspace() {
   useEffect(() => {
     if (id) saveChat(id, messages);
   }, [id, messages]);
+
+  // Persist selected resource IDs.
+  useEffect(() => {
+    if (id) saveResourceIds(id, selectedResources.map((r) => r.id));
+  }, [id, selectedResources]);
 
   // Debounced auto-save of manuscript while it's dirty.
   useEffect(() => {
@@ -219,7 +260,14 @@ export default function SermonWorkspace() {
       messages.filter((m) => m.role === 'user').length + 1;
 
     // Optimistically append the user's instruction to the chat thread.
-    const userTurn = { role: 'user', content: instruction, ts: Date.now() };
+    // Stamp the resources attached on this turn so the user can see them
+    // in the trail later.
+    const userTurn = {
+      role: 'user',
+      content: instruction,
+      ts: Date.now(),
+      resourceTitles: selectedResources.map((r) => r.title || '(untitled)'),
+    };
     setMessages((prev) => [...prev, userTurn]);
     setDraftInstruction('');
 
@@ -256,12 +304,15 @@ export default function SermonWorkspace() {
         ]);
       }
 
-      // 3) Call Claude with the assembled context.
+      // 3) Call Claude with the assembled context, including any
+      // resources selected for this turn.
+      const resourcesContext = buildResourcesContext(selectedResources);
       const revised = await reviseSermonManuscript({
         sermon,
         manuscript,
         voiceSystemPrompt: voicePrompt,
         markersReference,
+        resourcesContext,
         history: messages
           .filter((m) => m.kind !== 'note')
           .map((m) => ({ role: m.role, content: m.content })),
@@ -414,6 +465,13 @@ export default function SermonWorkspace() {
         </p>
       )}
 
+      {/* Resources for this turn — collapsible panel above the chat / manuscript */}
+      <WorkspaceResources
+        scriptureReference={sermon.scripture_reference || ''}
+        selectedResources={selectedResources}
+        setSelectedResources={setSelectedResources}
+      />
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Chat pane */}
         <div className="card flex flex-col" style={{ minHeight: '70vh' }}>
@@ -517,6 +575,8 @@ function ChatBubble({ message }) {
     );
   }
   const isUser = message.role === 'user';
+  const hasResources =
+    Array.isArray(message.resourceTitles) && message.resourceTitles.length > 0;
   return (
     <div
       className={
@@ -530,6 +590,11 @@ function ChatBubble({ message }) {
         {isUser ? 'You' : 'Claude'}
       </div>
       {message.content}
+      {hasResources && (
+        <div className="mt-1 text-[10px] text-gray-500">
+          Resources sent: {message.resourceTitles.join('; ')}
+        </div>
+      )}
     </div>
   );
 }
