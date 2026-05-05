@@ -1054,3 +1054,137 @@ export function buildMarkersReferenceText() {
     '  and book or work titles.',
   ].join('\n');
 }
+
+/**
+ * Sermon Workspace — propose slides for a manuscript.
+ *
+ * Sends the numbered manuscript paragraphs to Claude and asks for a
+ * batch of slide proposals. Each proposal carries a slide_type, title,
+ * body, speaker notes, the anchor paragraph index, and a one-sentence
+ * rationale. The pastor reviews the batch in a modal and accepts/edits/
+ * rejects each one before they land in the workspace_slides table.
+ *
+ * @param {Object} input
+ * @param {Object} input.sermon          - sermon row (title, scripture_reference)
+ * @param {string} input.manuscript      - current manuscript text
+ * @param {number[]} [input.skipParagraphIdxs] - paragraph indices that already
+ *   have a slide anchored; Claude is told to skip these so we don't
+ *   duplicate.
+ * @returns {Promise<Array<{
+ *   slide_type: 'title'|'scripture'|'quote'|'image'|'content'|'blank',
+ *   title: string,
+ *   body: string,
+ *   notes: string,
+ *   anchor_paragraph_idx: number|null,
+ *   rationale: string,
+ * }>>}
+ */
+export async function suggestSlidesForManuscript({
+  sermon,
+  manuscript,
+  skipParagraphIdxs = [],
+}) {
+  if (!manuscript || !manuscript.trim()) {
+    throw new Error('Nothing to suggest slides for — manuscript is empty.');
+  }
+
+  // Number the paragraphs explicitly so Claude can reference them by
+  // index in its anchor_paragraph_idx field.
+  const paragraphs = manuscript
+    .split(/\n[ \t]*\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (paragraphs.length === 0) {
+    throw new Error('Manuscript has no paragraphs to anchor slides to.');
+  }
+  const numbered = paragraphs
+    .map((p, i) => `[¶${i}] ${p}`)
+    .join('\n\n');
+
+  const skipList =
+    skipParagraphIdxs.length > 0
+      ? `\n\nDo NOT propose slides anchored to these paragraph indices (they already have slides): ${skipParagraphIdxs.join(', ')}.`
+      : '';
+
+  const sermonHeader = [];
+  if (sermon?.title) sermonHeader.push(`Sermon title: ${sermon.title}`);
+  if (sermon?.scripture_reference)
+    sermonHeader.push(`Scripture reference: ${sermon.scripture_reference}`);
+  const headerBlock = sermonHeader.length
+    ? sermonHeader.join('\n') + '\n\n'
+    : '';
+
+  const system = [
+    'You are helping a United Methodist pastor build a sermon-day slide deck.',
+    '',
+    'Slide types:',
+    '  - title:     Opening title slide (sermon title + scripture reference). Usually slide 1.',
+    '  - scripture: Display a scripture passage in full so the congregation can read along.',
+    '  - quote:     A pull quote from the sermon — a single striking sentence the preacher wants on screen.',
+    '  - image:     A scene the slide should depict (you describe what kind of image; a designer or stock photo will be picked later).',
+    '  - content:   A few bullet points / a heading that summarizes a teaching moment.',
+    '  - blank:     Deliberate visual pause (blank screen) — only when the manuscript explicitly calls for it.',
+    '',
+    'Guidelines:',
+    '  - Aim for ONE SLIDE PER MAJOR BEAT in the sermon. For a 2000-3000-word manuscript that\'s usually 8-15 slides total.',
+    '  - Most paragraphs do NOT need a slide. Connective prose and theological setup are usually slide-less. Only propose a slide when there\'s a real visual payoff.',
+    '  - If the manuscript starts with the standard "Don\'t Read Scripture First" / "Read [Reference]" instructions, the first content slide should be a title slide. Anchor it to paragraph 0 (or the first non-instruction paragraph).',
+    '  - For scripture slides: only quote what the manuscript itself quotes. Do not invent passages.',
+    '  - For pull-quote slides: pick the preacher\'s actual words from the manuscript. Don\'t paraphrase.',
+    '  - For image slides: describe what the image should show in 1-2 sentences. Don\'t pretend you can pick the actual photo.',
+    '  - Keep slide titles short (max ~6 words). Bodies should fit on a single slide read at preaching pace.',
+    '  - The anchor_paragraph_idx is the 0-based index of the paragraph in the manuscript where the preacher should advance to this slide.',
+    '',
+    'Output: a JSON array of slide proposals. Return ONLY the JSON array. No prose, no markdown fences. Each proposal:',
+    '  {',
+    '    "slide_type": one of the types above,',
+    '    "title": short heading on the slide,',
+    '    "body": main slide content (verse text, the quote, the bullets, or the image description),',
+    '    "notes": one or two sentences of context for the preacher (why this slide, what to do with it),',
+    '    "anchor_paragraph_idx": 0-based paragraph index where the preacher advances to this slide,',
+    '    "rationale": one sentence on why you proposed this slide',
+    '  }',
+  ].join('\n');
+
+  const userMsg =
+    headerBlock +
+    'Manuscript paragraphs (numbered):\n\n' +
+    numbered +
+    skipList;
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userMsg }],
+      max_tokens: 8000,
+    },
+    { timeoutMs: 180000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonArrayLoose(text);
+  if (!Array.isArray(parsed)) {
+    throw new Error("Couldn't parse Claude's slide suggestions as a JSON array.");
+  }
+
+  const validTypes = new Set(['title', 'scripture', 'quote', 'image', 'content', 'blank']);
+  return parsed
+    .filter((s) => s && typeof s === 'object')
+    .map((s) => {
+      const slideType = validTypes.has(s.slide_type) ? s.slide_type : 'content';
+      const idx =
+        Number.isInteger(s.anchor_paragraph_idx) &&
+        s.anchor_paragraph_idx >= 0 &&
+        s.anchor_paragraph_idx < paragraphs.length
+          ? s.anchor_paragraph_idx
+          : null;
+      return {
+        slide_type: slideType,
+        title: typeof s.title === 'string' ? s.title.trim() : '',
+        body: typeof s.body === 'string' ? s.body.trim() : '',
+        notes: typeof s.notes === 'string' ? s.notes.trim() : '',
+        anchor_paragraph_idx: idx,
+        anchor_paragraph_text: idx !== null ? paragraphs[idx] : null,
+        rationale: typeof s.rationale === 'string' ? s.rationale.trim() : '',
+      };
+    });
+}

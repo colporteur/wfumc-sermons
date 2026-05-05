@@ -13,6 +13,7 @@ import {
   resolveAnchor,
   paragraphPreview,
 } from '../lib/paragraphs';
+import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
 
 // Slides panel for the Sermon Workspace. Lives below the chat /
 // manuscript pair; collapsible, with a stranded-count badge in the
@@ -46,6 +47,7 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
   const [adding, setAdding] = useState(false);
   const [addForm, setAddForm] = useState(null);
   const [busyId, setBusyId] = useState(null); // 'new' or a slide id
+  const [suggestModalOpen, setSuggestModalOpen] = useState(false);
 
   // Live paragraph list — the anchor resolver works against this.
   const paragraphs = useMemo(
@@ -268,6 +270,46 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
     }
   };
 
+  // Accept a batch of suggestions from the Claude modal — bulk-create
+  // each one and append to the current slide list. Order is preserved
+  // from the suggestion order.
+  const handleAcceptSuggestions = async (suggestions) => {
+    if (!sermonId || !ownerUserId) {
+      throw new Error('Missing sermon or user.');
+    }
+    setError(null);
+    const startOrder = slides.length;
+    const created = [];
+    for (let i = 0; i < suggestions.length; i++) {
+      const s = suggestions[i];
+      try {
+        const row = await createSlide({
+          sermonId,
+          ownerUserId,
+          sortOrder: startOrder + i,
+          slideType: s.slide_type,
+          title: s.title,
+          body: s.body,
+          notes: s.notes,
+          anchorParagraphText: s.anchor_paragraph_text,
+          anchorParagraphIdx: s.anchor_paragraph_idx,
+        });
+        created.push(row);
+      } catch (e) {
+        // Surface the error to the parent (the modal will display it)
+        // and stop on first failure to avoid partial garbage.
+        throw new Error(
+          `Created ${created.length} of ${suggestions.length} slides before failing on slide #${i + 1}: ${
+            e.message || String(e)
+          }`
+        );
+      }
+    }
+    if (created.length > 0) {
+      setSlides((prev) => [...prev, ...created]);
+    }
+  };
+
   const move = async (idx, dir) => {
     const tgt = idx + dir;
     if (tgt < 0 || tgt >= slides.length) return;
@@ -310,13 +352,28 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
           </span>
         </button>
         {!collapsed && !adding && (
-          <button
-            type="button"
-            onClick={startAdd}
-            className="btn-secondary text-xs"
-          >
-            + Add slide
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSuggestModalOpen(true)}
+              disabled={!manuscript || !manuscript.trim()}
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                !manuscript || !manuscript.trim()
+                  ? 'Add some manuscript text first — Claude needs something to suggest slides for.'
+                  : 'Ask Claude to propose a batch of slides for this manuscript.'
+              }
+            >
+              ✨ Suggest slides
+            </button>
+            <button
+              type="button"
+              onClick={startAdd}
+              className="btn-secondary text-xs"
+            >
+              + Add slide
+            </button>
+          </div>
         )}
       </div>
 
@@ -398,6 +455,22 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
           </ul>
         </div>
       )}
+
+      <WorkspaceSlideSuggestionsModal
+        open={suggestModalOpen}
+        onClose={() => setSuggestModalOpen(false)}
+        sermon={sermon}
+        manuscript={manuscript}
+        skipParagraphIdxs={Array.from(
+          new Set(
+            slides
+              .map((s) => s.anchor_paragraph_idx)
+              .filter((v) => v !== null && v !== undefined)
+          )
+        )}
+        paragraphs={paragraphs}
+        onAccept={handleAcceptSuggestions}
+      />
     </div>
   );
 }
