@@ -33,7 +33,7 @@ export async function searchResources(q, { limit = 12 } = {}) {
     supabase
       .from('resources')
       .select(
-        'id, title, content, type, scripture_refs, themes, tone, source'
+        'id, title, content, resource_type, scripture_refs, themes, tone, source'
       )
       .or(orClause)
       .order('created_at', { ascending: false })
@@ -68,7 +68,7 @@ export async function suggestResourcesByScripture(scriptureReference, {
     supabase
       .from('resources')
       .select(
-        'id, title, content, type, scripture_refs, themes, tone, source'
+        'id, title, content, resource_type, scripture_refs, themes, tone, source'
       )
       .or(orClause)
       .order('created_at', { ascending: false })
@@ -96,7 +96,7 @@ export async function fetchResourcesByIds(ids) {
     supabase
       .from('resources')
       .select(
-        'id, title, content, type, scripture_refs, themes, tone, source'
+        'id, title, content, resource_type, scripture_refs, themes, tone, source'
       )
       .in('id', ids)
   );
@@ -116,7 +116,7 @@ export function buildResourcesContext(resources) {
   if (!Array.isArray(resources) || resources.length === 0) return '';
   const blocks = resources.map((r, i) => {
     const lines = [`## Resource ${i + 1}: ${r.title || '(untitled)'}`];
-    if (r.type) lines.push(`Type: ${r.type}`);
+    if (r.resource_type) lines.push(`Type: ${r.resource_type}`);
     if (r.scripture_refs) lines.push(`Scripture: ${r.scripture_refs}`);
     if (Array.isArray(r.themes) && r.themes.length) {
       lines.push(`Themes: ${r.themes.join(', ')}`);

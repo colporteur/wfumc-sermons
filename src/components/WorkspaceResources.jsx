@@ -262,9 +262,9 @@ function ResourceList({ rows, isSelected, onAdd, onRemove, showOverlap }) {
             <div className="flex-1 min-w-0">
               <p className="text-sm text-umc-900 font-medium truncate">
                 {r.title || '(untitled)'}
-                {r.type && (
+                {r.resource_type && (
                   <span className="ml-2 text-[10px] uppercase tracking-wide text-gray-500">
-                    {r.type}
+                    {r.resource_type}
                   </span>
                 )}
               </p>
