@@ -10,6 +10,7 @@ import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
+import PreachingsCard from '../components/PreachingsCard.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
@@ -612,75 +613,13 @@ export default function SermonDetail() {
         )}
       </div>
 
-      {/* Preachings */}
-      {preachedAt.length > 0 && (
-        <div className="card">
-          <h2 className="font-serif text-lg text-umc-900">
-            Preached
-            <span className="ml-2 text-sm font-normal text-gray-500">
-              ({preachedAt.length} time{preachedAt.length === 1 ? '' : 's'})
-            </span>
-          </h2>
-          <ul className="mt-2 divide-y divide-gray-100 text-sm">
-            {preachedAt.map((p) => (
-              <li
-                key={p.id}
-                className="py-2 flex items-start justify-between gap-3"
-              >
-                <div className="min-w-0">
-                  <div className="text-gray-700">
-                    {p.preached_at ? (
-                      fmtDate(p.preached_at)
-                    ) : (
-                      <span className="italic text-gray-400">
-                        Date unknown
-                      </span>
-                    )}
-                    {p.location && (
-                      <span className="text-gray-500 ml-2">— {p.location}</span>
-                    )}
-                  </div>
-                  {p.title_used && p.title_used !== sermon.title && (
-                    <div className="text-xs text-gray-500 italic mt-0.5">
-                      Titled: "{p.title_used}"
-                    </div>
-                  )}
-                  {p.series && (
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      Series: {p.series}
-                    </div>
-                  )}
-                  {p.bulletin && (
-                    <div className="text-xs text-gray-400 mt-0.5">
-                      In bulletin: {p.bulletin.sunday_designation || ''}
-                      {p.bulletin.status !== 'published' && (
-                        <span className="ml-1 px-1 py-0.5 text-[10px] uppercase tracking-wide rounded bg-gray-100 text-gray-500">
-                          {p.bulletin.status}
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  {p.liturgy_text && (
-                    <details className="mt-2">
-                      <summary className="text-xs text-umc-700 hover:text-umc-900 cursor-pointer">
-                        📄 Liturgy
-                        {p.liturgy_source_filename && (
-                          <span className="ml-1 text-gray-400 font-mono text-[10px]">
-                            ({p.liturgy_source_filename})
-                          </span>
-                        )}
-                      </summary>
-                      <p className="mt-2 text-sm text-gray-800 whitespace-pre-wrap font-serif leading-relaxed bg-gray-50 border border-gray-200 rounded p-3 max-h-96 overflow-y-auto">
-                        {p.liturgy_text}
-                      </p>
-                    </details>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+      {/* Preachings — full CRUD via PreachingsCard */}
+      <PreachingsCard
+        sermon={sermon}
+        preachings={preachedAt}
+        setPreachings={setPreachedAt}
+        userId={user?.id}
+      />
 
       {/* Past versions (revision snapshots) */}
       <RevisionsCard
