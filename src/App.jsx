@@ -18,6 +18,8 @@ import LiturgyDetail from './pages/LiturgyDetail.jsx';
 import LiturgyImport from './pages/LiturgyImport.jsx';
 import LiturgyReview from './pages/LiturgyReview.jsx';
 import VoiceGuide from './pages/VoiceGuide.jsx';
+import PrintPreferences from './pages/PrintPreferences.jsx';
+import Settings from './pages/Settings.jsx';
 
 export default function App() {
   return (
@@ -45,7 +47,9 @@ export default function App() {
         <Route path="/liturgies/import" element={<LiturgyImport />} />
         <Route path="/liturgies/review" element={<LiturgyReview />} />
         <Route path="/liturgies/:id" element={<LiturgyDetail />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="/settings/voice" element={<VoiceGuide />} />
+        <Route path="/settings/print" element={<PrintPreferences />} />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

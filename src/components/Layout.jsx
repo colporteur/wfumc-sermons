@@ -41,11 +41,11 @@ export default function Layout() {
                 Import
               </Link>
               <Link
-                to="/settings/voice"
+                to="/settings"
                 className="text-umc-100 hover:text-white underline whitespace-nowrap"
-                title="Pastoral voice guide"
+                title="Voice guide, print preferences, and other settings"
               >
-                Voice
+                Settings
               </Link>
               <span className="text-umc-100 hidden sm:inline">
                 {profile?.full_name}

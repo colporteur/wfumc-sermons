@@ -191,8 +191,8 @@ export default function VoiceGuide() {
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
-        <Link to="/" className="text-sm text-gray-500 hover:text-gray-700">
-          ← Sermons
+        <Link to="/settings" className="text-sm text-gray-500 hover:text-gray-700">
+          ← Settings
         </Link>
         <h1 className="font-serif text-2xl text-umc-900 mt-2">
           Pastoral voice guide
