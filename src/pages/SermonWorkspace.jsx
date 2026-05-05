@@ -14,6 +14,7 @@ import {
 } from '../lib/workspaceResources';
 import WorkspaceResources from '../components/WorkspaceResources.jsx';
 import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
+import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -646,6 +647,9 @@ export default function SermonWorkspace() {
           />
         </div>
       </div>
+
+      {/* Slides — anchored to manuscript paragraphs, with stranded detection */}
+      <WorkspaceSlides sermon={sermon} manuscript={manuscript} />
 
       <WorkspaceDiffModal
         open={diffForIndex !== null}
