@@ -20,6 +20,7 @@ import LiturgyReview from './pages/LiturgyReview.jsx';
 import VoiceGuide from './pages/VoiceGuide.jsx';
 import PrintPreferences from './pages/PrintPreferences.jsx';
 import Settings from './pages/Settings.jsx';
+import SermonWorkspace from './pages/SermonWorkspace.jsx';
 
 export default function App() {
   return (
@@ -35,6 +36,7 @@ export default function App() {
         <Route path="/" element={<SermonList />} />
         <Route path="/sermons/new" element={<SermonNew />} />
         <Route path="/sermons/:id" element={<SermonDetail />} />
+        <Route path="/sermons/:id/workspace" element={<SermonWorkspace />} />
         <Route path="/resources" element={<ResourceList />} />
         <Route path="/resources/new" element={<ResourceNew />} />
         <Route path="/resources/extract" element={<ResourceExtract />} />

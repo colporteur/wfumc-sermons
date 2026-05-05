@@ -572,6 +572,13 @@ export default function SermonDetail() {
                 </div>
               </div>
               <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <Link
+                  to={`/sermons/${sermon.id}/workspace`}
+                  className="btn-primary text-sm whitespace-nowrap"
+                  title="Open this sermon in the chat-driven Workspace to draft, revise, or rework with Claude"
+                >
+                  Open Workspace ↗
+                </Link>
                 <button
                   type="button"
                   onClick={startEdit}

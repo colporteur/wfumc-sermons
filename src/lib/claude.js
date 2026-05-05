@@ -912,3 +912,145 @@ Return the JSON array now.`;
       sort_order: i,
     }));
 }
+
+/**
+ * Sermon Workspace — revise (or draft from scratch) a sermon manuscript.
+ *
+ * Sends the full conversation to Claude along with: the pastor's voice
+ * guide + exemplar sermons, the manuscript markers reference, the
+ * sermon's scripture / title / notes, the current manuscript text, and
+ * the new revision instruction. Asks Claude to return ONLY the revised
+ * manuscript (no preamble, no explanation) so we can drop the response
+ * straight into the artifact pane.
+ *
+ * @param {Object} input
+ * @param {Object} input.sermon                 - sermon row (title, scripture_reference, notes)
+ * @param {string} input.manuscript             - current manuscript text (may be empty for from-scratch)
+ * @param {string} [input.voiceSystemPrompt]    - pre-rendered voice guide (from loadVoiceGuideForPrompt)
+ * @param {string} [input.markersReference]     - rendered markers reference (so Claude uses the right markers)
+ * @param {string} [input.resourcesContext]     - selected resources bundled as text (added later in #188)
+ * @param {Array<{role:'user'|'assistant', content:string}>} input.history - prior chat turns
+ * @param {string} input.instruction            - the new user instruction this turn
+ * @returns {Promise<string>} the revised manuscript text
+ */
+export async function reviseSermonManuscript({
+  sermon,
+  manuscript,
+  voiceSystemPrompt = '',
+  markersReference = '',
+  resourcesContext = '',
+  history = [],
+  instruction,
+}) {
+  if (!instruction || !instruction.trim()) {
+    throw new Error('Tell Claude what to change.');
+  }
+
+  const baseSystem = [
+    "You are helping a United Methodist pastor write and revise sermon manuscripts.",
+    'Each turn the pastor gives you an instruction. Your job is to return a revised',
+    'manuscript that reflects exactly that instruction, nothing more.',
+    '',
+    '== Output rules ==',
+    '- Return ONLY the full revised manuscript text. No preamble like "Here is...",',
+    '  no closing remarks, no explanation of what you changed, no markdown fences.',
+    '- Preserve the manuscript markers exactly as documented below — do not',
+    '  invent your own.',
+    '- Preserve hand edits the pastor made between turns. Do not silently undo a',
+    '  change he made unless his current instruction explicitly asks you to.',
+    '- Do not editorialize about the voice or theology you are matching. Just write',
+    '  in the voice.',
+    '- If the instruction is small (a sentence tweak), make a small targeted change',
+    '  and leave the rest alone.',
+    '- If the instruction is large (rewrite the second movement), do the rewrite,',
+    "  but keep parts the instruction didn't address.",
+  ].join('\n');
+
+  const systemParts = [baseSystem];
+  if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
+    systemParts.push(voiceSystemPrompt.trim());
+  }
+  if (markersReference && markersReference.trim()) {
+    systemParts.push(markersReference.trim());
+  }
+  if (resourcesContext && resourcesContext.trim()) {
+    systemParts.push(
+      '# Selected resources for this revision\n\n' +
+        'These are stories, illustrations, and quotes the pastor selected. ' +
+        'Use them only if the instruction calls for them; do not force them in.\n\n' +
+        resourcesContext.trim()
+    );
+  }
+
+  // Sermon metadata header — gives Claude the scripture and title up front.
+  const sermonHeader = [];
+  if (sermon?.title) sermonHeader.push(`Sermon title: ${sermon.title}`);
+  if (sermon?.scripture_reference)
+    sermonHeader.push(`Scripture reference: ${sermon.scripture_reference}`);
+  if (sermon?.notes) sermonHeader.push(`Pastor's private notes:\n${sermon.notes}`);
+
+  // The first user message in the conversation always carries the
+  // CURRENT manuscript so Claude has it as ground truth even on long
+  // chats. Subsequent assistant turns will replace the manuscript;
+  // for the next user turn we re-anchor with the live manuscript again.
+  const anchor = [
+    sermonHeader.length ? sermonHeader.join('\n') + '\n\n' : '',
+    manuscript && manuscript.trim()
+      ? '== CURRENT MANUSCRIPT ==\n\n' + manuscript
+      : '== NO MANUSCRIPT YET ==\n\nStart from scratch. Draft a new manuscript based on the scripture and the instruction below.',
+  ].join('');
+
+  // Build the messages array. Strategy:
+  //   1) Synthetic first turn: anchor (manuscript + metadata)
+  //   2) Synthetic first assistant turn: acknowledges receipt
+  //   3) Prior chat history (real turns from earlier this session)
+  //   4) The new instruction as the final user turn
+  const messages = [
+    { role: 'user', content: anchor },
+    {
+      role: 'assistant',
+      content:
+        "Got it. I have the current manuscript and the sermon context. Tell me what to change.",
+    },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: instruction.trim() },
+  ];
+
+  // Manuscripts can be long; allow up to 64k output tokens. Claude sonnet
+  // 4 supports that; the proxy passes through whatever model is configured
+  // server-side. 4 minutes timeout is generous for a long revision.
+  const response = await callClaude(
+    {
+      system: systemParts.join('\n\n'),
+      messages,
+      max_tokens: 16000,
+    },
+    { timeoutMs: 240000 }
+  );
+  const text = extractText(response);
+  return (text || '').trim();
+}
+
+/**
+ * The static markers reference Claude needs to know about. Mirrors the
+ * MANUSCRIPT_MARKERS in lib/printPreferences.js but rendered as prose
+ * suitable for a system prompt.
+ */
+export function buildMarkersReferenceText() {
+  return [
+    '# Manuscript markers',
+    '',
+    'When you draft or revise a manuscript, use these inline markers exactly. The Word',
+    'exporter will detect them automatically and apply the right formatting; you should',
+    'not try to format anything yourself.',
+    '',
+    '- "Don\'t Read Scripture First" instruction → write it on its own line, exactly that text.',
+    '- "Read [Scripture Reference]" instruction → write it on its own line, e.g. "Read Acts 2:42-47".',
+    '- Slide markers → write them as <SLIDE #N – Description>, where N is the slide number',
+    '  and Description is a short label. Slide markers can be on their own line, or',
+    "  inline within a body paragraph if that's how the narrative flow wants them.",
+    '- Body text → just write naturally. Use smart quotes (" ") for scripture quotations,',
+    '  not italics. Italics are reserved for foreign / Latin terms (e.g. risus paschalis)',
+    '  and book or work titles.',
+  ].join('\n');
+}
