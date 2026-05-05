@@ -277,9 +277,9 @@ function ResourceList({ rows, isSelected, onAdd, onRemove, showOverlap }) {
                 {Array.isArray(r.themes) && r.themes.length > 0 && (
                   <span>Themes: {r.themes.join(', ')}</span>
                 )}
-                {showOverlap && r._overlap_books?.length > 0 && (
+                {showOverlap && r._overlap_labels?.length > 0 && (
                   <span className="text-green-700">
-                    Matches: {r._overlap_books.join(', ')}
+                    Matches: {r._overlap_labels.join('; ')}
                   </span>
                 )}
               </p>

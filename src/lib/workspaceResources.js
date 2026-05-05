@@ -1,5 +1,10 @@
 import { supabase, withTimeout } from './supabase';
-import { booksFromReference } from './scripture';
+import {
+  booksFromReference,
+  parseScriptureRanges,
+  findOverlappingRanges,
+  formatRange,
+} from './scripture';
 
 // Helpers for the Workspace's Resources picker. Two responsibilities:
 //
@@ -43,23 +48,30 @@ export async function searchResources(q, { limit = 12 } = {}) {
   return data ?? [];
 }
 
-// Suggest resources that share a Bible book with the sermon's scripture
-// reference. The matcher here is intentionally cheap (book-level
-// overlap), since the worship planner's intelligence panel already
-// proved that book-level alone surfaces good candidates without false
-// negatives from chapter/verse mismatches.
+// Suggest resources whose scripture_refs share at least one verse with
+// the sermon's scripture reference. Two-stage matching:
 //
-// Returns rows annotated with `_overlap_books` (string[]) so the UI
-// can show why each one was suggested.
+//   1. SQL pre-filter (cheap): pull every resource whose scripture_refs
+//      mentions one of the books in the sermon's reference. We
+//      over-fetch (limit*4) so the JS post-filter has enough candidates.
+//
+//   2. JS post-filter (precise): parse both references into normalized
+//      verse ranges and only keep resources where at least one range
+//      actually overlaps. So "Acts 17:22-31" matches "Acts 17:24-29"
+//      (overlap) but NOT "Acts 2:42-47" (same book, no shared verse).
+//
+// Annotates each surviving row with `_overlap_ranges` (the specific
+// ranges from the resource that matched) so the UI can show *why*
+// each suggestion came up.
 export async function suggestResourcesByScripture(scriptureReference, {
   limit = 24,
 } = {}) {
-  const books = booksFromReference(scriptureReference);
-  if (books.length === 0) return [];
+  const sermonRanges = parseScriptureRanges(scriptureReference);
+  if (sermonRanges.length === 0) return [];
 
-  // Pull all resources whose scripture_refs ilike-matches ANY of our
-  // books. Build an .or() clause across all books × ilike.
-  // RLS scopes the result automatically.
+  // Cheap book-level pre-filter for the SQL query — this lets RLS and
+  // Postgres do the bulk filtering before we pay for the JS overlap test.
+  const books = [...new Set(sermonRanges.map((r) => r.book))];
   const orClause = books
     .map((b) => `scripture_refs.ilike.%${b.replace(/[%_]/g, '')}%`)
     .join(',');
@@ -72,18 +84,25 @@ export async function suggestResourcesByScripture(scriptureReference, {
       )
       .or(orClause)
       .order('created_at', { ascending: false })
-      .limit(limit)
+      // Over-fetch so the JS verse-level filter has room to drop matches
+      // that share a book but not a verse.
+      .limit(Math.max(limit * 4, 80))
   );
   if (error) throw error;
 
-  // Annotate with which books overlapped, so the UI can show
-  // "Acts" or "Acts, Romans" beside each suggestion.
-  return (data ?? []).map((r) => {
-    const overlap = books.filter((b) =>
-      (r.scripture_refs || '').toLowerCase().includes(b.toLowerCase())
-    );
-    return { ...r, _overlap_books: overlap };
-  });
+  // Verse-level post-filter.
+  const matched = [];
+  for (const r of data ?? []) {
+    const overlap = findOverlappingRanges(scriptureReference, r.scripture_refs);
+    if (overlap.length === 0) continue;
+    matched.push({
+      ...r,
+      _overlap_ranges: overlap,
+      _overlap_labels: overlap.map(formatRange),
+    });
+    if (matched.length >= limit) break;
+  }
+  return matched;
 }
 
 // Re-fetch full data for a list of selected resource IDs. Used when
