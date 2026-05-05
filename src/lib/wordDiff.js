@@ -11,17 +11,26 @@
 //      the diff from misaligning huge chunks because of incidental
 //      shared words elsewhere in the manuscript.
 //
-//   2. For paragraphs that changed: walk the paragraph ops looking
-//      for adjacent del+add pairs whose word overlap (Jaccard) is
-//      high enough that they're clearly modifications of the same
-//      paragraph. Word-level LCS them in place; render the rest as
-//      pure paragraph adds / deletes.
+//   2. For groups of changed paragraphs (consecutive non-eq ops):
+//      do bipartite matching by Jaccard similarity to pair each
+//      deleted paragraph with its most-similar added paragraph.
+//      Matched pairs become "modifications" — word-LCS them in
+//      place. Unmatched paragraphs render as pure adds or deletes.
 //
-// This avoids the classic LCS pathology where a small match in the
-// wrong place drags surrounding text into del/add territory.
+// Comparison ignores curly-vs-straight quote-style differences so a
+// pipeline that re-encodes "isn't" as "isn't" doesn't show every
+// contraction as a change. Display preserves whatever was actually
+// in the manuscript.
 
 const LCS_CELL_CAP = 4_000_000; // Word-LCS cap inside a single paragraph
 const SIMILARITY_THRESHOLD = 0.3; // Jaccard cutoff for "this is a mod"
+
+// Normalize curly/typographic quotes to straight ones for COMPARISON
+// purposes only. Display still uses the original text.
+function normCmp(s) {
+  if (!s) return s;
+  return s.replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
+}
 
 // Split text into a sequence of tokens that, when concatenated, equal
 // the original text exactly. Three classes:
@@ -65,6 +74,10 @@ export function diffWords(oldText, newText) {
   if (oldText === newText) {
     return oldText ? [{ type: 'eq', text: oldText }] : [];
   }
+  // Quote-style-only difference? Treat as identical.
+  if (normCmp(oldText) === normCmp(newText)) {
+    return oldText ? [{ type: 'eq', text: oldText }] : [];
+  }
 
   const oldParas = splitParagraphs(oldText || '');
   const newParas = splitParagraphs(newText || '');
@@ -77,13 +90,11 @@ export function diffWords(oldText, newText) {
     return [{ type: 'del', text: oldParas.join('') }];
   }
 
-  // Stage 1: paragraph-level LCS. Common paragraphs become anchors
-  // that pin the diff so it can't wander.
+  // Stage 1: paragraph-level LCS. Common paragraphs become anchors.
   const paraOps = paragraphLcs(oldParas, newParas);
 
-  // Stage 2: pair adjacent del+add paragraphs into modifications when
-  // they're similar enough that they're clearly an edit of the same
-  // paragraph. Then word-diff only inside those.
+  // Stage 2: within each contiguous run of changed paragraphs,
+  // bipartite-match dels to adds by similarity.
   const refined = pairUpModifications(paraOps);
 
   const segments = [];
@@ -95,7 +106,6 @@ export function diffWords(oldText, newText) {
     } else if (op.type === 'del') {
       segments.push({ type: 'del', text: op.text });
     } else {
-      // 'add'
       segments.push({ type: 'add', text: op.text });
     }
   }
@@ -104,34 +114,40 @@ export function diffWords(oldText, newText) {
 
 // =====================================================================
 // Paragraph-level LCS
+// Comparison uses normalized text so smart-quote-only differences
+// don't fragment the alignment; the original text is what we emit.
 // =====================================================================
 
 function paragraphLcs(a, b) {
   const m = a.length;
   const n = b.length;
-  // Trim common prefix / suffix paragraphs first — same trick as inside
-  // a paragraph, even more effective at this granularity.
+  const aN = a.map(normCmp);
+  const bN = b.map(normCmp);
+
+  // Trim common prefix / suffix paragraphs first.
   let pre = 0;
-  while (pre < m && pre < n && a[pre] === b[pre]) pre++;
+  while (pre < m && pre < n && aN[pre] === bN[pre]) pre++;
   let suf = 0;
   while (
     suf < m - pre &&
     suf < n - pre &&
-    a[m - 1 - suf] === b[n - 1 - suf]
+    aN[m - 1 - suf] === bN[n - 1 - suf]
   ) {
     suf++;
   }
   const aMid = a.slice(pre, m - suf);
   const bMid = b.slice(pre, n - suf);
+  const aMidN = aN.slice(pre, m - suf);
+  const bMidN = bN.slice(pre, n - suf);
 
   const ops = [];
   for (let i = 0; i < pre; i++) ops.push({ type: 'eq', text: a[i] });
-  ops.push(...lcsParagraphMiddle(aMid, bMid));
+  ops.push(...lcsParagraphMiddle(aMid, bMid, aMidN, bMidN));
   for (let i = m - suf; i < m; i++) ops.push({ type: 'eq', text: a[i] });
   return ops;
 }
 
-function lcsParagraphMiddle(a, b) {
+function lcsParagraphMiddle(a, b, aN, bN) {
   const m = a.length;
   const n = b.length;
   if (m === 0 && n === 0) return [];
@@ -141,12 +157,12 @@ function lcsParagraphMiddle(a, b) {
   const dp = new Array(m + 1);
   for (let i = 0; i <= m; i++) dp[i] = new Uint32Array(n + 1);
   for (let i = 1; i <= m; i++) {
-    const ai = a[i - 1];
+    const ai = aN[i - 1];
     const row = dp[i];
     const prev = dp[i - 1];
     for (let j = 1; j <= n; j++) {
       row[j] =
-        ai === b[j - 1]
+        ai === bN[j - 1]
           ? prev[j - 1] + 1
           : prev[j] >= row[j - 1]
           ? prev[j]
@@ -158,7 +174,7 @@ function lcsParagraphMiddle(a, b) {
   let i = m;
   let j = n;
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+    if (i > 0 && j > 0 && aN[i - 1] === bN[j - 1]) {
       ops.push({ type: 'eq', text: a[i - 1] });
       i--;
       j--;
@@ -175,34 +191,84 @@ function lcsParagraphMiddle(a, b) {
 }
 
 // =====================================================================
-// Pair-up: turn adjacent (del, add) into (mod) when similar enough.
-// Greedy left-to-right scan — handles the common case of Claude
-// rewriting one paragraph at a time without the complexity of full
-// bipartite matching.
+// Pair-up: bipartite matching within each contiguous change group.
+// Greedy by descending similarity — for each (del, add) pair above
+// the threshold, assign matches highest-sim-first until no more
+// candidates remain. Unmatched dels and adds stay as pure ops.
 // =====================================================================
 
 function pairUpModifications(ops) {
   const out = [];
   let i = 0;
   while (i < ops.length) {
-    const cur = ops[i];
-    const next = ops[i + 1];
-    if (
-      next &&
-      ((cur.type === 'del' && next.type === 'add') ||
-        (cur.type === 'add' && next.type === 'del'))
-    ) {
-      const oldText = cur.type === 'del' ? cur.text : next.text;
-      const newText = cur.type === 'add' ? cur.text : next.text;
-      const sim = jaccardSimilarity(oldText, newText);
-      if (sim >= SIMILARITY_THRESHOLD) {
-        out.push({ type: 'mod', oldText, newText });
-        i += 2;
-        continue;
+    if (ops[i].type === 'eq') {
+      out.push(ops[i]);
+      i++;
+      continue;
+    }
+    // Walk to the end of the contiguous non-eq group.
+    const groupStart = i;
+    while (i < ops.length && ops[i].type !== 'eq') i++;
+    const groupEnd = i;
+
+    // Index dels and adds within the group, preserving original order.
+    const dels = [];
+    const adds = [];
+    for (let k = groupStart; k < groupEnd; k++) {
+      const op = ops[k];
+      if (op.type === 'del') dels.push({ pos: k, text: op.text });
+      else adds.push({ pos: k, text: op.text });
+    }
+
+    // Score every (del, add) pair above the similarity threshold.
+    const candidates = [];
+    for (let d = 0; d < dels.length; d++) {
+      for (let aIdx = 0; aIdx < adds.length; aIdx++) {
+        const sim = jaccardSimilarity(dels[d].text, adds[aIdx].text);
+        if (sim >= SIMILARITY_THRESHOLD) {
+          candidates.push({ d, a: aIdx, sim });
+        }
       }
     }
-    out.push(cur);
-    i += 1;
+    candidates.sort((x, y) => y.sim - x.sim);
+
+    const matchedD = new Set();
+    const matchedA = new Set();
+    const dToA = new Map();
+    for (const c of candidates) {
+      if (matchedD.has(c.d) || matchedA.has(c.a)) continue;
+      matchedD.add(c.d);
+      matchedA.add(c.a);
+      dToA.set(c.d, c.a);
+    }
+
+    // Emit results in the original op order. A matched del emits a
+    // 'mod' op carrying its paired add's text; a matched add is
+    // skipped (its mod was already emitted at the del's position).
+    let dCursor = 0;
+    let aCursor = 0;
+    for (let k = groupStart; k < groupEnd; k++) {
+      const op = ops[k];
+      if (op.type === 'del') {
+        if (dToA.has(dCursor)) {
+          const aIdx = dToA.get(dCursor);
+          out.push({
+            type: 'mod',
+            oldText: dels[dCursor].text,
+            newText: adds[aIdx].text,
+          });
+        } else {
+          out.push({ type: 'del', text: op.text });
+        }
+        dCursor++;
+      } else {
+        // 'add'
+        if (!matchedA.has(aCursor)) {
+          out.push({ type: 'add', text: op.text });
+        }
+        aCursor++;
+      }
+    }
   }
   return out;
 }
@@ -220,38 +286,48 @@ function jaccardSimilarity(a, b) {
 function wordSet(s) {
   const set = new Set();
   if (!s) return set;
-  const m = s.toLowerCase().match(/[a-z0-9'’]+/g) || [];
+  // Normalize quote style before extracting words so contractions
+  // round-trip ("isn't" / "isn't" both become "isn't").
+  const m = normCmp(s).toLowerCase().match(/[a-z0-9']+/g) || [];
   for (const w of m) set.add(w);
   return set;
 }
 
 // =====================================================================
 // Word-level LCS inside a single modified paragraph
+// Uses the same quote-normalization for comparison.
 // =====================================================================
 
 function wordLevelDiff(oldText, newText) {
   if (oldText === newText) {
     return oldText ? [{ type: 'eq', text: oldText }] : [];
   }
+  if (normCmp(oldText) === normCmp(newText)) {
+    return oldText ? [{ type: 'eq', text: oldText }] : [];
+  }
   const oldTokens = tokenize(oldText || '');
   const newTokens = tokenize(newText || '');
+  const oldNorm = oldTokens.map(normCmp);
+  const newNorm = newTokens.map(normCmp);
 
   let pre = 0;
   const minLen = Math.min(oldTokens.length, newTokens.length);
-  while (pre < minLen && oldTokens[pre] === newTokens[pre]) pre++;
+  while (pre < minLen && oldNorm[pre] === newNorm[pre]) pre++;
 
   let suf = 0;
   while (
     suf < oldTokens.length - pre &&
     suf < newTokens.length - pre &&
-    oldTokens[oldTokens.length - 1 - suf] ===
-      newTokens[newTokens.length - 1 - suf]
+    oldNorm[oldTokens.length - 1 - suf] ===
+      newNorm[newTokens.length - 1 - suf]
   ) {
     suf++;
   }
 
   const oldMiddle = oldTokens.slice(pre, oldTokens.length - suf);
   const newMiddle = newTokens.slice(pre, newTokens.length - suf);
+  const oldMiddleN = oldNorm.slice(pre, oldTokens.length - suf);
+  const newMiddleN = newNorm.slice(pre, newTokens.length - suf);
 
   let middleSegments;
   if (oldMiddle.length * newMiddle.length > LCS_CELL_CAP) {
@@ -263,7 +339,7 @@ function wordLevelDiff(oldText, newText) {
       middleSegments.push({ type: 'add', text: newMiddle.join('') });
     }
   } else {
-    middleSegments = wordLcs(oldMiddle, newMiddle);
+    middleSegments = wordLcs(oldMiddle, newMiddle, oldMiddleN, newMiddleN);
   }
 
   const out = [];
@@ -280,7 +356,7 @@ function wordLevelDiff(oldText, newText) {
   return coalesce(out);
 }
 
-function wordLcs(a, b) {
+function wordLcs(a, b, aN, bN) {
   const m = a.length;
   const n = b.length;
   if (m === 0 && n === 0) return [];
@@ -290,12 +366,12 @@ function wordLcs(a, b) {
   const dp = new Array(m + 1);
   for (let i = 0; i <= m; i++) dp[i] = new Uint32Array(n + 1);
   for (let i = 1; i <= m; i++) {
-    const ai = a[i - 1];
+    const ai = aN[i - 1];
     const row = dp[i];
     const prev = dp[i - 1];
     for (let j = 1; j <= n; j++) {
       row[j] =
-        ai === b[j - 1]
+        ai === bN[j - 1]
           ? prev[j - 1] + 1
           : prev[j] >= row[j - 1]
           ? prev[j]
@@ -307,7 +383,7 @@ function wordLcs(a, b) {
   let i = m;
   let j = n;
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && a[i - 1] === b[j - 1]) {
+    if (i > 0 && j > 0 && aN[i - 1] === bN[j - 1]) {
       segs.push({ type: 'eq', text: a[i - 1] });
       i--;
       j--;
@@ -323,8 +399,7 @@ function wordLcs(a, b) {
   return segs;
 }
 
-// Merge consecutive segments of the same type into one — keeps the
-// rendered DOM small and the visual change blocks readable.
+// Merge consecutive segments of the same type into one.
 function coalesce(segs) {
   const out = [];
   for (const s of segs) {
