@@ -303,9 +303,22 @@ export default function SermonList() {
             Every sermon you've preached, indexed and searchable.
           </p>
         </div>
-        <Link to="/sermons/new" className="btn-primary whitespace-nowrap">
-          + New sermon
-        </Link>
+        <div className="flex items-center gap-2 whitespace-nowrap">
+          <Link
+            to="/sermons/new/workspace"
+            className="btn-primary"
+            title="Start a new sermon directly in the chat-revise Workspace with Claude."
+          >
+            ✨ Draft in Workspace
+          </Link>
+          <Link
+            to="/sermons/new"
+            className="btn-secondary"
+            title="Use the full New Sermon form (theme, lectionary year, eulogy flag, manuscript upload, etc.)."
+          >
+            + New sermon
+          </Link>
+        </div>
       </div>
 
       <div className="card space-y-3">
