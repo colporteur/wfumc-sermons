@@ -1149,6 +1149,147 @@ export function buildMarkersReferenceText() {
 }
 
 /**
+ * Sermon Workspace — propose how to use one or more resources in the
+ * current manuscript, WITHOUT writing the revised manuscript itself.
+ *
+ * Distinct from reviseSermonManuscript: that helper produces a finished
+ * draft. This helper produces a SHORT, ACTIONABLE PLAN in second person
+ * — "place this story between paragraphs 4 and 5; quote it in full;
+ * land on the line about hope" — that the pastor reads and reacts to
+ * before committing to a revision turn.
+ *
+ * Output format (markdown-ish, two short sections):
+ *   ## Where it goes
+ *   ...one short paragraph naming the spot in the manuscript...
+ *
+ *   ## How it lands
+ *   ...one short paragraph naming the rhetorical move...
+ *
+ * The conversation supports refinement: the pastor can give feedback
+ * ("that's too early — try moving it after the second illustration")
+ * and Claude returns a revised proposal. History flows back as a
+ * normal user/assistant chat.
+ *
+ * @param {Object} input
+ * @param {Object} input.sermon
+ * @param {string} input.manuscript
+ * @param {string} [input.voiceSystemPrompt]
+ * @param {string} [input.markersReference]
+ * @param {string} input.resourcesContext  - resources to consider, formatted by buildResourcesContext
+ * @param {Array<{role:'user'|'assistant', content:string}>} [input.history]
+ *   Prior chat turns within this exploration. The first turn is
+ *   synthesized by the caller (or this helper) — see below.
+ * @param {string} [input.feedback] - optional pastor feedback for refinement
+ * @returns {Promise<string>} the proposal text
+ */
+export async function proposeResourceUsage({
+  sermon,
+  manuscript,
+  voiceSystemPrompt = '',
+  markersReference = '',
+  resourcesContext = '',
+  history = [],
+  feedback = '',
+}) {
+  if (!resourcesContext || !resourcesContext.trim()) {
+    throw new Error('No resources to explore.');
+  }
+
+  const baseSystem = [
+    'You are helping a United Methodist pastor decide HOW to use one or',
+    'more sermon-prep resources in an existing sermon manuscript.',
+    '',
+    "Your job on this turn is NOT to rewrite the manuscript. Your job is",
+    'to PROPOSE a plan in plain English that the pastor reads and reacts',
+    'to. Be specific. Reference paragraph numbers or distinctive phrases',
+    "from the manuscript so it's clear where the resource lands.",
+    '',
+    'Always return the proposal in this exact two-section format:',
+    '',
+    '## Where it goes',
+    '',
+    'One short paragraph (2-4 sentences). Name the spot — paragraph index,',
+    'a distinctive sentence, or "right after the second illustration about',
+    'doubt." Be concrete about position; never say "anywhere" or "early in',
+    'the sermon."',
+    '',
+    '## How it lands',
+    '',
+    'One short paragraph (2-4 sentences). Name the rhetorical move:',
+    'illustration of an existing point, pivot to a new movement, image',
+    'before the application, etc. Note any shaping the resource needs to',
+    "fit (trim, partial quote, paraphrase). Don't write the actual prose;",
+    'describe the move.',
+    '',
+    'If the pastor pushes back with feedback, revise the proposal and',
+    'return the same two sections again. Do not include preambles, do not',
+    'apologize, do not summarize the manuscript or the resource — just',
+    'the two sections.',
+  ].join('\n');
+
+  const systemParts = [baseSystem];
+  if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
+    systemParts.push(voiceSystemPrompt.trim());
+  }
+  if (markersReference && markersReference.trim()) {
+    systemParts.push(markersReference.trim());
+  }
+  systemParts.push(
+    '# Resources under consideration\n\n' + resourcesContext.trim()
+  );
+
+  const sermonHeader = [];
+  if (sermon?.title) sermonHeader.push(`Sermon title: ${sermon.title}`);
+  if (sermon?.scripture_reference)
+    sermonHeader.push(`Scripture reference: ${sermon.scripture_reference}`);
+  const headerBlock = sermonHeader.length
+    ? sermonHeader.join('\n') + '\n\n'
+    : '';
+
+  // Number paragraphs so Claude can reference them by index in
+  // "Where it goes." Mirrors what suggestSlidesForManuscript does.
+  const paragraphs = (manuscript || '')
+    .split(/\n[ \t]*\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const numbered = paragraphs.map((p, i) => `[¶${i}] ${p}`).join('\n\n');
+  const anchor =
+    headerBlock +
+    'Manuscript paragraphs (numbered):\n\n' +
+    numbered;
+
+  // First turn: anchor; second turn: assistant ack; then history; then
+  // current ask (proposal request OR refinement feedback).
+  const initialUserAsk =
+    history.length === 0
+      ? 'Propose how to use the resource(s) under consideration in this manuscript. Two sections: Where it goes / How it lands.'
+      : feedback ||
+        'Refine the proposal based on the conversation above and return the same two sections again.';
+
+  const messages = [
+    { role: 'user', content: anchor },
+    {
+      role: 'assistant',
+      content:
+        'Got it. I have the manuscript and the resource(s). Tell me what you want to consider.',
+    },
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: 'user', content: initialUserAsk },
+  ];
+
+  const response = await callClaude(
+    {
+      system: systemParts.join('\n\n'),
+      messages,
+      max_tokens: 2000,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(response);
+  return (text || '').trim();
+}
+
+/**
  * Sermon Workspace — propose slides for a manuscript.
  *
  * Sends the numbered manuscript paragraphs to Claude and asks for a

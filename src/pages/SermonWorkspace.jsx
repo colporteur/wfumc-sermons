@@ -16,6 +16,7 @@ import WorkspaceResources from '../components/WorkspaceResources.jsx';
 import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
 import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 import PrintExportModal from '../components/PrintExportModal.jsx';
+import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -124,6 +125,11 @@ export default function SermonWorkspace() {
 
   // Print-to-Word modal open/closed.
   const [printModalOpen, setPrintModalOpen] = useState(false);
+
+  // Explore modal: when a resource is opened for "Explore", we stash
+  // the initial resource(s) here. The modal handles its own pairing.
+  const [exploreInitialResources, setExploreInitialResources] = useState([]);
+  const exploreOpen = exploreInitialResources.length > 0;
 
   // Composer state
   const [draftInstruction, setDraftInstruction] = useState('');
@@ -259,8 +265,8 @@ export default function SermonWorkspace() {
     return data?.id;
   };
 
-  const handleSendInstruction = async () => {
-    const instruction = draftInstruction.trim();
+  const handleSendInstruction = async (overrideInstruction, overrideResources) => {
+    const instruction = (overrideInstruction ?? draftInstruction).trim();
     if (!instruction || sending || !sermon?.id) return;
     if (isLocked) {
       setError('Manuscript is locked. Unlock to send Claude a revision.');
@@ -273,6 +279,12 @@ export default function SermonWorkspace() {
     const turnNumber =
       messages.filter((m) => m.role === 'user').length + 1;
 
+    // Resources for THIS turn — usually whatever's selected; can be
+    // overridden (e.g., the Explore modal hands the explored set up
+    // explicitly so we don't have to wait for selectedResources state
+    // to flush before firing the call).
+    const resourcesForTurn = overrideResources ?? selectedResources;
+
     // Optimistically append the user's instruction to the chat thread.
     // Stamp the resources attached on this turn so the user can see them
     // in the trail later.
@@ -280,7 +292,7 @@ export default function SermonWorkspace() {
       role: 'user',
       content: instruction,
       ts: Date.now(),
-      resourceTitles: selectedResources.map((r) => r.title || '(untitled)'),
+      resourceTitles: resourcesForTurn.map((r) => r.title || '(untitled)'),
     };
     setMessages((prev) => [...prev, userTurn]);
     setDraftInstruction('');
@@ -320,7 +332,7 @@ export default function SermonWorkspace() {
 
       // 3) Call Claude with the assembled context, including any
       // resources selected for this turn.
-      const resourcesContext = buildResourcesContext(selectedResources);
+      const resourcesContext = buildResourcesContext(resourcesForTurn);
       const revised = await reviseSermonManuscript({
         sermon,
         manuscript,
@@ -732,6 +744,7 @@ export default function SermonWorkspace() {
         scriptureReference={sermon.scripture_reference || ''}
         selectedResources={selectedResources}
         setSelectedResources={setSelectedResources}
+        onExplore={(r) => setExploreInitialResources([r])}
       />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -807,7 +820,7 @@ export default function SermonWorkspace() {
               </span>
               <button
                 type="button"
-                onClick={handleSendInstruction}
+                onClick={() => handleSendInstruction()}
                 disabled={!draftInstruction.trim() || sending || isLocked}
                 className="btn-primary text-sm disabled:opacity-50"
               >
@@ -860,6 +873,28 @@ export default function SermonWorkspace() {
         onClose={() => setPrintModalOpen(false)}
         sermon={sermon}
         manuscriptText={manuscript}
+      />
+
+      <WorkspaceExploreModal
+        open={exploreOpen}
+        onClose={() => setExploreInitialResources([])}
+        sermon={sermon}
+        manuscript={manuscript}
+        initialResources={exploreInitialResources}
+        isLocked={isLocked}
+        onAccept={({ instruction, resources }) => {
+          // Make sure every explored resource is in the selection set
+          // so future turns also see them in the panel.
+          setSelectedResources((prev) => {
+            const byId = new Map(prev.map((r) => [r.id, r]));
+            for (const r of resources) byId.set(r.id, r);
+            return Array.from(byId.values());
+          });
+          // Pass instruction + resources through directly — handleSendInstruction's
+          // override params bypass the React-state-flush race that
+          // setting draftInstruction + setTimeout would otherwise hit.
+          handleSendInstruction(instruction, resources);
+        }}
       />
 
       <WorkspaceDiffModal

@@ -24,6 +24,7 @@ export default function WorkspaceResources({
   scriptureReference,
   selectedResources,
   setSelectedResources,
+  onExplore,
 }) {
   const [collapsed, setCollapsed] = useState(
     () => selectedResources.length > 0
@@ -207,6 +208,7 @@ export default function WorkspaceResources({
                 isSelected={isSelected}
                 onAdd={addOne}
                 onRemove={removeOne}
+                onExplore={onExplore}
                 showOverlap={false}
               />
             )}
@@ -229,6 +231,7 @@ export default function WorkspaceResources({
                   isSelected={isSelected}
                   onAdd={addOne}
                   onRemove={removeOne}
+                  onExplore={onExplore}
                   showOverlap
                 />
               )}
@@ -251,7 +254,7 @@ export default function WorkspaceResources({
   );
 }
 
-function ResourceList({ rows, isSelected, onAdd, onRemove, showOverlap }) {
+function ResourceList({ rows, isSelected, onAdd, onRemove, onExplore, showOverlap }) {
   return (
     <ul className="mt-2 max-h-72 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded">
       {rows.map((r) => {
@@ -284,19 +287,31 @@ function ResourceList({ rows, isSelected, onAdd, onRemove, showOverlap }) {
                 )}
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => (selected ? onRemove(r.id) : onAdd(r))}
-              className={
-                'shrink-0 text-xs rounded px-2 py-1 ' +
-                (selected
-                  ? 'bg-umc-50 text-umc-900 border border-umc-200 hover:bg-red-50 hover:text-red-700'
-                  : 'btn-secondary')
-              }
-              title={selected ? 'Remove from selection' : 'Add to selection'}
-            >
-              {selected ? '✓ Selected' : '+ Add'}
-            </button>
+            <div className="shrink-0 flex flex-col items-stretch gap-1">
+              {onExplore && (
+                <button
+                  type="button"
+                  onClick={() => onExplore(r)}
+                  className="text-xs rounded px-2 py-1 bg-white border border-umc-200 text-umc-700 hover:bg-umc-50"
+                  title="Ask Claude to propose how to use this resource in the manuscript before committing to a revision."
+                >
+                  ✨ Explore
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => (selected ? onRemove(r.id) : onAdd(r))}
+                className={
+                  'text-xs rounded px-2 py-1 ' +
+                  (selected
+                    ? 'bg-umc-50 text-umc-900 border border-umc-200 hover:bg-red-50 hover:text-red-700'
+                    : 'btn-secondary')
+                }
+                title={selected ? 'Remove from selection' : 'Add to selection'}
+              >
+                {selected ? '✓ Selected' : '+ Add'}
+              </button>
+            </div>
           </li>
         );
       })}
