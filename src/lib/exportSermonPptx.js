@@ -27,6 +27,11 @@ import pptxgen from 'pptxgenjs';
 const SLIDE_W = 13.333;
 const SLIDE_H = 7.5;
 
+// Default font face for all slide text. Albertus Medium is Todd's
+// preferred font for both manuscript headers and slides; if a viewer's
+// machine doesn't have it installed PowerPoint will substitute.
+const SLIDE_FONT = 'Albertus Medium';
+
 // --- Per-type slide builders ----------------------------------------
 
 function addTitleSlide(pres, s) {
@@ -41,7 +46,7 @@ function addTitleSlide(pres, s) {
       fontSize: 48,
       bold: true,
       align: 'center',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '1A1A1A',
     });
   }
@@ -53,7 +58,7 @@ function addTitleSlide(pres, s) {
       h: 1,
       fontSize: 24,
       align: 'center',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '666666',
     });
   }
@@ -72,7 +77,7 @@ function addScriptureSlide(pres, s) {
       fontSize: 28,
       bold: true,
       align: 'center',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '1A1A1A',
     });
   }
@@ -84,7 +89,7 @@ function addScriptureSlide(pres, s) {
     fontSize: 28,
     align: 'center',
     valign: 'middle',
-    fontFace: 'Cambria',
+    fontFace: SLIDE_FONT,
     color: '1A1A1A',
     fit: 'shrink',
   });
@@ -104,7 +109,7 @@ function addQuoteSlide(pres, s) {
     italic: true,
     align: 'center',
     valign: 'middle',
-    fontFace: 'Cambria',
+    fontFace: SLIDE_FONT,
     color: '1A1A1A',
     fit: 'shrink',
   });
@@ -116,7 +121,7 @@ function addQuoteSlide(pres, s) {
       h: 0.6,
       fontSize: 18,
       align: 'center',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '666666',
     });
   }
@@ -135,7 +140,7 @@ function addImageSlide(pres, s) {
       fontSize: 28,
       bold: true,
       align: 'center',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '1A1A1A',
     });
   }
@@ -157,7 +162,7 @@ function addImageSlide(pres, s) {
     italic: true,
     align: 'center',
     valign: 'middle',
-    fontFace: 'Calibri',
+    fontFace: SLIDE_FONT,
     color: '999999',
   });
   if (s.notes) slide.addNotes(s.notes);
@@ -175,7 +180,7 @@ function addContentSlide(pres, s) {
       fontSize: 32,
       bold: true,
       align: 'left',
-      fontFace: 'Calibri',
+      fontFace: SLIDE_FONT,
       color: '1A1A1A',
     });
   }
@@ -190,7 +195,7 @@ function addContentSlide(pres, s) {
           w: SLIDE_W - 1.4,
           h: SLIDE_H - 2,
           fontSize: 24,
-          fontFace: 'Calibri',
+          fontFace: SLIDE_FONT,
           color: '1A1A1A',
           paraSpaceAfter: 8,
         }
@@ -204,7 +209,7 @@ function addContentSlide(pres, s) {
         fontSize: 24,
         align: 'left',
         valign: 'top',
-        fontFace: 'Calibri',
+        fontFace: SLIDE_FONT,
         color: '1A1A1A',
       });
     }

@@ -12,6 +12,8 @@ import {
   splitManuscriptParagraphs,
   resolveAnchor,
   paragraphPreview,
+  insertSlideMarkersIntoManuscript,
+  findManuscriptSlideMarkers,
 } from '../lib/paragraphs';
 import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
 import { downloadSermonPptx } from '../lib/exportSermonPptx';
@@ -35,7 +37,7 @@ import { downloadSermonPptx } from '../lib/exportSermonPptx';
 // Cached anchor indices in the DB are kept in sync with whatever the
 // resolver produced after each render, so the next session opens with
 // the right indices without recomputing.
-export default function WorkspaceSlides({ sermon, manuscript }) {
+export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange }) {
   const sermonId = sermon?.id;
   const ownerUserId = sermon?.owner_user_id;
 
@@ -61,6 +63,129 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
       setError(e.message || String(e));
     } finally {
       setExporting(false);
+    }
+  };
+
+  // Insert <SLIDE #N – Description> markers into the manuscript for
+  // each anchored slide. Uses the slide's panel position (1-based) as
+  // the slide number; pastor can reorder slides in the panel before
+  // running this if they want narrative-order numbering.
+  const handleInsertMarkers = () => {
+    if (!onManuscriptChange) {
+      setError(
+        'Manuscript is locked or not editable. Unlock to insert markers.'
+      );
+      return;
+    }
+    if (slides.length === 0) return;
+    const { newText, inserted, skipped } = insertSlideMarkersIntoManuscript(
+      manuscript || '',
+      slides
+    );
+    if (inserted === 0) {
+      setError(
+        skipped > 0
+          ? `All ${skipped} eligible slides already have markers in the manuscript (or aren't anchored).`
+          : 'No slides have a paragraph anchor. Pin slides to paragraphs in the panel first.'
+      );
+      return;
+    }
+    if (
+      !window.confirm(
+        `Insert ${inserted} <SLIDE> marker${inserted === 1 ? '' : 's'} into the manuscript?\n\n` +
+          (skipped > 0
+            ? `${skipped} slide${skipped === 1 ? '' : 's'} will be skipped (already have markers, unanchored, or stranded).\n\n`
+            : '') +
+          'Markers go at the start of each anchored paragraph. You can move them within the paragraph manually after.'
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    onManuscriptChange(newText);
+  };
+
+  // Scan the manuscript for existing <SLIDE #N – Description> markers
+  // and create workspace_slide rows for each one that doesn't already
+  // have a corresponding slide. Useful for bringing pre-existing
+  // manuscripts into the slides panel without retyping every slide.
+  const handleCreateFromMarkers = async () => {
+    if (!sermonId || !ownerUserId) return;
+    if (!manuscript || !manuscript.trim()) {
+      setError('Manuscript is empty.');
+      return;
+    }
+    const markers = findManuscriptSlideMarkers(manuscript);
+    if (markers.length === 0) {
+      setError(
+        'No <SLIDE> markers found in the manuscript. Markers look like "<SLIDE #1 – Description>".'
+      );
+      return;
+    }
+    // Sort by marker number, then by paragraph order as tiebreaker.
+    markers.sort(
+      (a, b) => a.number - b.number || a.paragraphIdx - b.paragraphIdx
+    );
+
+    // Filter out markers that already have a corresponding slide:
+    // same description AND same anchor paragraph.
+    const newMarkers = markers.filter(
+      (m) =>
+        !slides.some(
+          (s) =>
+            s.title === m.description &&
+            s.anchor_paragraph_idx === m.paragraphIdx
+        )
+    );
+    const skipped = markers.length - newMarkers.length;
+
+    if (newMarkers.length === 0) {
+      setError(
+        `All ${markers.length} markers already have matching slides in the panel.`
+      );
+      return;
+    }
+
+    if (
+      !window.confirm(
+        `Found ${markers.length} <SLIDE> marker${markers.length === 1 ? '' : 's'} in the manuscript.\n\n` +
+          `Create ${newMarkers.length} new slide${newMarkers.length === 1 ? '' : 's'}?` +
+          (skipped > 0
+            ? `\n\n${skipped} marker${skipped === 1 ? '' : 's'} already have matching slides and will be skipped.`
+            : '') +
+          '\n\nAll new slides default to the "Content" type. You can edit type/body/notes after.'
+      )
+    ) {
+      return;
+    }
+
+    setError(null);
+    const startOrder = slides.length;
+    const created = [];
+    try {
+      for (let i = 0; i < newMarkers.length; i++) {
+        const m = newMarkers[i];
+        const row = await createSlide({
+          sermonId,
+          ownerUserId,
+          sortOrder: startOrder + i,
+          slideType: 'content',
+          title: m.description,
+          body: '',
+          notes: '',
+          anchorParagraphText: m.paragraphText,
+          anchorParagraphIdx: m.paragraphIdx,
+        });
+        created.push(row);
+      }
+      setSlides((prev) => [...prev, ...created]);
+    } catch (e) {
+      setError(
+        `Created ${created.length} of ${newMarkers.length} slides before failing: ${e.message || String(e)}`
+      );
+      if (created.length > 0) {
+        setSlides((prev) => [...prev, ...created]);
+      }
     }
   };
 
@@ -380,6 +505,39 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
               }
             >
               {exporting ? 'Building…' : '📊 Export to PowerPoint'}
+            </button>
+            <button
+              type="button"
+              onClick={handleInsertMarkers}
+              disabled={
+                slides.length === 0 ||
+                !onManuscriptChange ||
+                !manuscript ||
+                !manuscript.trim()
+              }
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                !onManuscriptChange
+                  ? 'Manuscript is locked. Unlock to insert markers.'
+                  : slides.length === 0
+                  ? 'Add at least one anchored slide first.'
+                  : 'Add <SLIDE #N – Title> markers to the manuscript at each anchored slide\'s paragraph.'
+              }
+            >
+              ↩ Insert markers in manuscript
+            </button>
+            <button
+              type="button"
+              onClick={handleCreateFromMarkers}
+              disabled={!manuscript || !manuscript.trim()}
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                !manuscript || !manuscript.trim()
+                  ? 'Manuscript is empty.'
+                  : 'Scan the manuscript for existing <SLIDE> markers and create slide rows for each one.'
+              }
+            >
+              ↪ Create from markers
             </button>
             <button
               type="button"

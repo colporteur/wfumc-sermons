@@ -842,7 +842,11 @@ export default function SermonWorkspace() {
       </div>
 
       {/* Slides — anchored to manuscript paragraphs, with stranded detection */}
-      <WorkspaceSlides sermon={sermon} manuscript={manuscript} />
+      <WorkspaceSlides
+        sermon={sermon}
+        manuscript={manuscript}
+        onManuscriptChange={isLocked ? null : setManuscript}
+      />
 
       <PrintExportModal
         open={printModalOpen}
