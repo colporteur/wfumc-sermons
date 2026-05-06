@@ -11,6 +11,8 @@ import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
 import PreachingsCard from '../components/PreachingsCard.jsx';
+import ManuscriptWithSlides from '../components/ManuscriptWithSlides.jsx';
+import { fetchSlideImages } from '../lib/sermonSlideImages';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
@@ -35,6 +37,8 @@ export default function SermonDetail() {
   const [revisions, setRevisions] = useState([]);
   // Resources linked to this sermon (sermon_resources rows w/ resource joined)
   const [linkedResources, setLinkedResources] = useState([]);
+  // Uploaded slide deck images for inline rendering inside the manuscript.
+  const [slideImages, setSlideImages] = useState([]);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showMerge, setShowMerge] = useState(false);
@@ -70,51 +74,58 @@ export default function SermonDetail() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, preachingsRes, revisionsRes, resourcesRes] =
-          await Promise.all([
-            withTimeout(
-              supabase
-                .from('sermons')
-                .select('*')
-                .eq('id', id)
-                .eq('owner_user_id', user.id)
-                .maybeSingle()
-            ),
-            withTimeout(
-              supabase
-                .from('preachings')
-                .select(
-                  '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
-                )
-                .eq('sermon_id', id)
-                .eq('owner_user_id', user.id)
-                .order('preached_at', { ascending: false, nullsFirst: false })
-            ),
-            withTimeout(
-              supabase
-                .from('sermon_revisions')
-                .select('*')
-                .eq('sermon_id', id)
-                .eq('owner_user_id', user.id)
-                .order('taken_at', { ascending: false })
-            ),
-            withTimeout(
-              supabase
-                .from('sermon_resources')
-                .select(
-                  'id, used_notes, created_at, resource:resources(id, resource_type, title, content, source, themes, tone)'
-                )
-                .eq('sermon_id', id)
-                .eq('owner_user_id', user.id)
-                .order('created_at', { ascending: false })
-            ),
-          ]);
+        const [
+          sermonRes,
+          preachingsRes,
+          revisionsRes,
+          resourcesRes,
+          slideImagesRes,
+        ] = await Promise.all([
+          withTimeout(
+            supabase
+              .from('sermons')
+              .select('*')
+              .eq('id', id)
+              .eq('owner_user_id', user.id)
+              .maybeSingle()
+          ),
+          withTimeout(
+            supabase
+              .from('preachings')
+              .select(
+                '*, bulletin:bulletins(id, service_date, sunday_designation, status)'
+              )
+              .eq('sermon_id', id)
+              .eq('owner_user_id', user.id)
+              .order('preached_at', { ascending: false, nullsFirst: false })
+          ),
+          withTimeout(
+            supabase
+              .from('sermon_revisions')
+              .select('*')
+              .eq('sermon_id', id)
+              .eq('owner_user_id', user.id)
+              .order('taken_at', { ascending: false })
+          ),
+          withTimeout(
+            supabase
+              .from('sermon_resources')
+              .select(
+                'id, used_notes, created_at, resource:resources(id, resource_type, title, content, source, themes, tone)'
+              )
+              .eq('sermon_id', id)
+              .eq('owner_user_id', user.id)
+              .order('created_at', { ascending: false })
+          ),
+          fetchSlideImages(id).catch(() => []),
+        ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachingsRes.error) throw preachingsRes.error;
         if (revisionsRes.error) throw revisionsRes.error;
         if (resourcesRes.error) throw resourcesRes.error;
         if (cancelled) return;
         setSermon(sermonRes.data);
+        setSlideImages(slideImagesRes || []);
         setPreachedAt(preachingsRes.data ?? []);
         setRevisions(revisionsRes.data ?? []);
         setLinkedResources(resourcesRes.data ?? []);
@@ -655,7 +666,11 @@ export default function SermonDetail() {
       <SermonLiturgiesCard sermon={sermon} />
 
       {/* Manuscript */}
-      <ManuscriptCard sermon={sermon} setSermon={setSermon} />
+      <ManuscriptCard
+        sermon={sermon}
+        setSermon={setSermon}
+        slideImages={slideImages}
+      />
 
       {showMerge && (
         <MergeSermonsModal
@@ -1752,7 +1767,7 @@ function RevisionsCard({ sermon, revisions, setRevisions, userId }) {
 // Edit drafts persist to sessionStorage so a navigation away (or the
 // auth re-validation flicker) doesn't lose work. On return, edit mode
 // auto-resumes with a small "unsaved changes restored" banner.
-function ManuscriptCard({ sermon, setSermon }) {
+function ManuscriptCard({ sermon, setSermon, slideImages = [] }) {
   const { user } = useAuth();
   const draftKey =
     user?.id && sermon?.id
@@ -2024,9 +2039,12 @@ function ManuscriptCard({ sermon, setSermon }) {
           </div>
         </div>
       ) : sermon.manuscript_text ? (
-        <p className="mt-3 text-base text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
-          {sermon.manuscript_text}
-        </p>
+        <div className="mt-3">
+          <ManuscriptWithSlides
+            text={sermon.manuscript_text}
+            slideImages={slideImages}
+          />
+        </div>
       ) : (
         <p className="mt-3 text-sm text-gray-400 italic">
           No manuscript text saved for this sermon. Click "+ Add manuscript"
