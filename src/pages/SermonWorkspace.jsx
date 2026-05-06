@@ -402,6 +402,56 @@ export default function SermonWorkspace() {
             '. Click "Save now" to retry.'
         );
       }
+
+      // 6) Auto-link the resources Claude saw to this sermon via the
+      // sermon_resources junction. Idempotent — UNIQUE(sermon_id,
+      // resource_id) means re-using a resource on a later turn won't
+      // double-insert. Only newly-linked rows come back with select(),
+      // so we can stamp a quiet chat note on first use.
+      if (resourcesForTurn.length > 0 && user?.id) {
+        try {
+          const rows = resourcesForTurn.map((r) => ({
+            sermon_id: sermon.id,
+            resource_id: r.id,
+            owner_user_id: user.id,
+            used_notes: 'Auto-linked from Workspace revision',
+          }));
+          const { data: linked, error: linkErr } = await withTimeout(
+            supabase
+              .from('sermon_resources')
+              .upsert(rows, {
+                onConflict: 'sermon_id,resource_id',
+                ignoreDuplicates: true,
+              })
+              .select('resource_id')
+          );
+          if (linkErr) throw linkErr;
+          const newCount = (linked ?? []).length;
+          if (newCount > 0) {
+            const newIds = new Set((linked || []).map((l) => l.resource_id));
+            const newTitles = resourcesForTurn
+              .filter((r) => newIds.has(r.id))
+              .map((r) => r.title || '(untitled)');
+            const summary =
+              newTitles.length <= 2
+                ? newTitles.map((t) => `"${t}"`).join(' and ')
+                : `${newTitles.length} resources`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: 'assistant',
+                kind: 'note',
+                content: `Linked ${summary} to this sermon's "Resources used" list.`,
+                ts: Date.now(),
+              },
+            ]);
+          }
+        } catch (linkErr) {
+          // Don't block the revision if linking fails — it's metadata.
+          // eslint-disable-next-line no-console
+          console.warn('Failed to auto-link resources to sermon', linkErr);
+        }
+      }
     } catch (e) {
       setMessages((prev) => [
         ...prev,
