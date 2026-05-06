@@ -1330,28 +1330,53 @@ export async function pairScriptureWithResource({
   );
 
   const baseSystem = [
-    'You are helping a United Methodist pastor generate a sermon block —',
+    'You are helping a United Methodist pastor generate a sermon BLOCK —',
     'a self-contained piece of preaching prose that pairs a single resource',
-    '(story, quote, illustration, etc.) with a scripture passage.',
+    '(story, quote, illustration, etc.) with a scripture passage. The block',
+    'may stand alone or be woven into a longer sermon later.',
     '',
-    'The block may stand alone or be woven into a longer sermon later;',
-    "don't assume what comes before or after.",
+    '== A BLOCK IS NOT A MINI-SERMON ==',
+    '',
+    'It has no scaffolding around it. The pastor will provide that themselves',
+    'when they decide where the block goes. Specifically, even if the voice',
+    'guide below describes any of the following as standard practice in this',
+    "pastor's full sermons, DO NOT include them in the block:",
+    '',
+    '  - "Don\'t Read Scripture First" instruction lines',
+    '  - "Read [Scripture Reference]" instruction lines',
+    '  - Opening or closing prayers, benedictions, doxologies',
+    '  - "Let us pray," "Amen," sermon-ending formulas',
+    '  - Calls to worship, welcomes, announcements',
+    '  - Transitions to / from other liturgy elements',
+    '  - Section headings or beat labels',
+    '',
+    'The voice guide tells you how this pastor SOUNDS — vocabulary,',
+    'sentence rhythm, theological framing, characteristic moves. Apply it',
+    "for style. Do NOT apply it for structure: you are writing a block,",
+    'not a full sermon.',
+    '',
+    '== Output rules ==',
     '',
     'Output prose only. No headings, no bullet points, no commentary about',
     'what you wrote. Write as the pastor would write — first person where',
     'natural, congregational "we" where appropriate, no academic distance.',
     '',
     'You may use slide markers like "<SLIDE #1 – Description>" inline if',
-    "the block naturally has a visual moment, but don't force them.",
+    "the block naturally has a visual moment, but don't force them. No",
+    'other markers belong in a block.',
   ].join('\n');
 
+  // Intentionally NOT including the full markers reference here —
+  // that would re-introduce the "Don't Read Scripture First" / "Read X"
+  // marker conventions which are full-sermon scaffolding, not block
+  // scaffolding. Slide markers are described inline above instead.
   const systemParts = [baseSystem];
   if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
     systemParts.push(voiceSystemPrompt.trim());
   }
-  if (markersReference && markersReference.trim()) {
-    systemParts.push(markersReference.trim());
-  }
+  // markersReference param kept in the function signature for backward
+  // compatibility but deliberately ignored.
+  void markersReference;
 
   // User message with the assignment.
   const resourceLines = [];
