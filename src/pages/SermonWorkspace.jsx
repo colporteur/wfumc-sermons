@@ -258,6 +258,10 @@ export default function SermonWorkspace() {
   const handleSendInstruction = async () => {
     const instruction = draftInstruction.trim();
     if (!instruction || sending || !sermon?.id) return;
+    if (isLocked) {
+      setError('Manuscript is locked. Unlock to send Claude a revision.');
+      return;
+    }
     setSending(true);
     setError(null);
 
@@ -398,6 +402,130 @@ export default function SermonWorkspace() {
     }
   };
 
+  // Lock state derived from the sermon row (columns from migration 0038).
+  const isLocked = sermon?.manuscript_locked === true;
+  const lockedAt = sermon?.manuscript_locked_at
+    ? new Date(sermon.manuscript_locked_at)
+    : null;
+  const [locking, setLocking] = useState(false);
+
+  // Count existing "Final" labeled snapshots to decide whether the next
+  // one should be "Final" (first lock) or "Final v2" (subsequent locks).
+  const computeFinalLabel = async () => {
+    const { data, error: cntErr } = await withTimeout(
+      supabase
+        .from('sermon_revisions')
+        .select('id, label')
+        .eq('sermon_id', sermon.id)
+        .ilike('label', 'Final%')
+    );
+    if (cntErr) throw cntErr;
+    const count = (data || []).length;
+    return count === 0 ? 'Final' : `Final v${count + 1}`;
+  };
+
+  const handleLock = async () => {
+    if (!sermon?.id || !user?.id) return;
+    if (
+      !window.confirm(
+        'Lock the manuscript?\n\n' +
+          '• Saves the current text as a "Final" snapshot under Past Versions\n' +
+          '• Disables Claude revisions and direct edits until you unlock\n' +
+          '\nThe snapshot stays permanent. You can unlock any time to revise.'
+      )
+    ) {
+      return;
+    }
+    setLocking(true);
+    setError(null);
+    try {
+      // Persist any pending hand edits so the snapshot captures them.
+      if (dirty) {
+        await doSave();
+      }
+      // Compute the label ("Final" / "Final v2" / ...).
+      const label = await computeFinalLabel();
+      // Take the snapshot.
+      const { data: snap, error: snapErr } = await withTimeout(
+        supabase
+          .from('sermon_revisions')
+          .insert({
+            sermon_id: sermon.id,
+            owner_user_id: user.id,
+            snapshot_title: sermon.title ?? null,
+            snapshot_manuscript_text: manuscript || null,
+            snapshot_scripture_reference: sermon.scripture_reference ?? null,
+            snapshot_theme: sermon.theme ?? null,
+            snapshot_notes: sermon.notes ?? null,
+            label,
+          })
+          .select('id')
+          .single()
+      );
+      if (snapErr) throw snapErr;
+      // Flip the lock flags on the sermon row.
+      const { data: updated, error: updErr } = await withTimeout(
+        supabase
+          .from('sermons')
+          .update({
+            manuscript_locked: true,
+            manuscript_locked_at: new Date().toISOString(),
+            manuscript_locked_revision_id: snap.id,
+          })
+          .eq('id', sermon.id)
+          .select('*')
+          .single()
+      );
+      if (updErr) throw updErr;
+      setSermon(updated);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          kind: 'note',
+          content: `Manuscript locked as "${label}". Snapshot saved to Past Versions.`,
+          ts: Date.now(),
+        },
+      ]);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLocking(false);
+    }
+  };
+
+  const handleUnlock = async () => {
+    if (!sermon?.id) return;
+    setLocking(true);
+    setError(null);
+    try {
+      const { data: updated, error: updErr } = await withTimeout(
+        supabase
+          .from('sermons')
+          .update({ manuscript_locked: false })
+          .eq('id', sermon.id)
+          .select('*')
+          .single()
+      );
+      if (updErr) throw updErr;
+      setSermon(updated);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          kind: 'note',
+          content:
+            'Manuscript unlocked for revision. The previous "Final" snapshot is still saved under Past Versions.',
+          ts: Date.now(),
+        },
+      ]);
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setLocking(false);
+    }
+  };
+
   const handleClearChat = () => {
     if (
       messages.length > 0 &&
@@ -415,7 +543,10 @@ export default function SermonWorkspace() {
   // manuscript-before snapshot. Only this turn shows a "Revert" button —
   // older turns can be rolled back via the sermon_revisions snapshots
   // taken at each turn (visible on the SermonDetail Past Versions panel).
+  // Locked manuscripts hide Revert entirely — unlock first if you want
+  // to roll back.
   const mostRecentRevertableIdx = (() => {
+    if (sermon?.manuscript_locked) return -1;
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
       if (
@@ -518,23 +649,51 @@ export default function SermonWorkspace() {
             )}
           </p>
         </div>
-        <div className="flex items-center gap-3 text-xs">
-          {savedAt && !dirty && (
-            <span className="text-green-700">
-              Saved {savedAt.toLocaleTimeString()}
-            </span>
+        <div className="flex items-center gap-3 text-xs flex-wrap">
+          {isLocked ? (
+            <>
+              <span className="text-umc-700 font-medium">
+                🔒 Finalized
+                {lockedAt && ` ${lockedAt.toLocaleDateString()}`}
+              </span>
+              <button
+                type="button"
+                onClick={handleUnlock}
+                disabled={locking}
+                className="btn-secondary text-xs disabled:opacity-50"
+              >
+                {locking ? 'Working…' : 'Unlock to revise'}
+              </button>
+            </>
+          ) : (
+            <>
+              {savedAt && !dirty && (
+                <span className="text-green-700">
+                  Saved {savedAt.toLocaleTimeString()}
+                </span>
+              )}
+              {dirty && (
+                <span className="text-amber-700">Unsaved hand edits</span>
+              )}
+              <button
+                type="button"
+                onClick={doSave}
+                disabled={!dirty || saving}
+                className="btn-secondary text-xs disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save now'}
+              </button>
+              <button
+                type="button"
+                onClick={handleLock}
+                disabled={locking}
+                className="btn-primary text-xs disabled:opacity-50"
+                title="Lock the manuscript and save the current text as a permanent 'Final' snapshot."
+              >
+                {locking ? 'Working…' : '🔒 Lock manuscript'}
+              </button>
+            </>
           )}
-          {dirty && (
-            <span className="text-amber-700">Unsaved hand edits</span>
-          )}
-          <button
-            type="button"
-            onClick={doSave}
-            disabled={!dirty || saving}
-            className="btn-secondary text-xs disabled:opacity-50"
-          >
-            {saving ? 'Saving…' : 'Save now'}
-          </button>
         </div>
       </div>
 
@@ -597,6 +756,12 @@ export default function SermonWorkspace() {
             <div ref={chatEndRef} />
           </div>
           <div className="mt-3 border-t border-gray-100 pt-3 space-y-2">
+            {isLocked && (
+              <p className="text-xs text-umc-700 bg-umc-50 border border-umc-200 rounded px-2 py-1.5">
+                🔒 Manuscript is locked — Claude revisions are paused.
+                Use “Unlock to revise” at the top of the page to continue.
+              </p>
+            )}
             <textarea
               value={draftInstruction}
               onChange={(e) => setDraftInstruction(e.target.value)}
@@ -609,8 +774,8 @@ export default function SermonWorkspace() {
               }}
               placeholder="Tell Claude what to change. e.g. 'Tighten the second illustration. It's repetitive.'"
               rows={3}
-              className="input w-full text-sm font-serif leading-relaxed"
-              disabled={sending}
+              className="input w-full text-sm font-serif leading-relaxed disabled:bg-gray-50 disabled:text-gray-400"
+              disabled={sending || isLocked}
             />
             <div className="flex items-center justify-between text-xs">
               <span className="text-gray-500">
@@ -619,7 +784,7 @@ export default function SermonWorkspace() {
               <button
                 type="button"
                 onClick={handleSendInstruction}
-                disabled={!draftInstruction.trim() || sending}
+                disabled={!draftInstruction.trim() || sending || isLocked}
                 className="btn-primary text-sm disabled:opacity-50"
               >
                 {sending ? 'Sending…' : 'Send to Claude'}
@@ -631,7 +796,14 @@ export default function SermonWorkspace() {
         {/* Manuscript pane */}
         <div className="card flex flex-col" style={{ minHeight: '70vh' }}>
           <div className="flex items-baseline justify-between gap-2 mb-2">
-            <h2 className="font-serif text-lg text-umc-900">Manuscript</h2>
+            <h2 className="font-serif text-lg text-umc-900">
+              Manuscript
+              {isLocked && (
+                <span className="ml-2 text-xs font-normal text-umc-700">
+                  🔒 Read-only
+                </span>
+              )}
+            </h2>
             <span className="text-xs text-gray-500">
               {countWords(manuscript)} words
             </span>
@@ -639,10 +811,14 @@ export default function SermonWorkspace() {
           <textarea
             value={manuscript}
             onChange={(e) => setManuscript(e.target.value)}
+            readOnly={isLocked}
             placeholder={
               "The manuscript will appear here. Hand-edit freely between Claude turns — your edits are preserved and Claude sees them on the next turn."
             }
-            className="flex-1 w-full input font-serif text-sm leading-relaxed resize-none"
+            className={
+              'flex-1 w-full input font-serif text-sm leading-relaxed resize-none ' +
+              (isLocked ? 'bg-gray-50 text-gray-700 cursor-default' : '')
+            }
             style={{ minHeight: '60vh' }}
           />
         </div>
