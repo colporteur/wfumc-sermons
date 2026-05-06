@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { booksFromReference } from '../lib/scripture';
 import { fetchSlideImageCountsByUser } from '../lib/sermonSlideImages';
+import { fetchStashedBlockLiveCountsByUser } from '../lib/sermonStashedBlocks';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -83,6 +84,10 @@ export default function SermonList() {
   // Number of slide-deck images uploaded per sermon. Used for the
   // 🖼️ badge on each row in the list.
   const [slideImageCounts, setSlideImageCounts] = useState(new Map());
+  // Number of LIVE (used_at IS NULL) stashed blocks per sermon, for
+  // the 📌 badge — flags sermons that have unworked-in material
+  // waiting for next preaching.
+  const [stashedBlockCounts, setStashedBlockCounts] = useState(new Map());
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(
     () => filtersFromSearch(searchParams),
@@ -103,25 +108,30 @@ export default function SermonList() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, preachRes, slideCountsMap] = await Promise.all([
-          withTimeout(
-            supabase
-              .from('sermons')
-              .select('*')
-              .eq('owner_user_id', user.id)
-              .order('created_at', { ascending: false })
-          ),
-          // Pull EVERY preaching the user owns (not just is_at_our_church)
-          // so we can compute most-recent + WFUMC-flag in one pass.
-          withTimeout(
-            supabase
-              .from('preachings')
-              .select('sermon_id, preached_at, is_at_our_church')
-              .eq('owner_user_id', user.id)
-          ),
-          // Slide-image counts for the 🖼️ badge per sermon.
-          fetchSlideImageCountsByUser(user.id).catch(() => new Map()),
-        ]);
+        const [sermonRes, preachRes, slideCountsMap, stashedCountsMap] =
+          await Promise.all([
+            withTimeout(
+              supabase
+                .from('sermons')
+                .select('*')
+                .eq('owner_user_id', user.id)
+                .order('created_at', { ascending: false })
+            ),
+            // Pull EVERY preaching the user owns (not just is_at_our_church)
+            // so we can compute most-recent + WFUMC-flag in one pass.
+            withTimeout(
+              supabase
+                .from('preachings')
+                .select('sermon_id, preached_at, is_at_our_church')
+                .eq('owner_user_id', user.id)
+            ),
+            // Slide-image counts for the 🖼️ badge per sermon.
+            fetchSlideImageCountsByUser(user.id).catch(() => new Map()),
+            // Live (un-archived) stashed-block counts for the 📌 badge.
+            fetchStashedBlockLiveCountsByUser(user.id).catch(
+              () => new Map()
+            ),
+          ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachRes.error) throw preachRes.error;
         if (!cancelled) {
@@ -140,6 +150,7 @@ export default function SermonList() {
           setWfumcSermonIds(wfumc);
           setLatestPreachedBySermon(latest);
           setSlideImageCounts(slideCountsMap || new Map());
+          setStashedBlockCounts(stashedCountsMap || new Map());
         }
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
@@ -471,6 +482,14 @@ export default function SermonList() {
                           title={`${slideImageCounts.get(s.id)} slide image${slideImageCounts.get(s.id) === 1 ? '' : 's'} uploaded. Click sermon to view the deck.`}
                         >
                           🖼️ {slideImageCounts.get(s.id)}
+                        </span>
+                      )}
+                      {stashedBlockCounts.get(s.id) > 0 && (
+                        <span
+                          className="px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-purple-50 text-purple-900 border border-purple-200"
+                          title={`${stashedBlockCounts.get(s.id)} stashed block${stashedBlockCounts.get(s.id) === 1 ? '' : 's'} waiting for next preaching. Click sermon to view.`}
+                        >
+                          📌 {stashedBlockCounts.get(s.id)}
                         </span>
                       )}
                     </div>
