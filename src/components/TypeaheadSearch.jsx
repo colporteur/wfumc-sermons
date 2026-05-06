@@ -35,6 +35,14 @@ export default function TypeaheadSearch({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
 
+  // Set props can't go directly in useEffect deps — `new Set()` from
+  // the parent's default makes a fresh reference every render, which
+  // would fire the effect endlessly and cancel the 250ms debounce
+  // every time, so the search never actually runs. Use an order-
+  // independent string key so the effect only re-runs when the
+  // contents actually change.
+  const excludeIdsKey = Array.from(excludeIds).sort().join('|');
+
   // Debounced query
   useEffect(() => {
     if (!q.trim() || q.trim().length < minChars) {
@@ -74,7 +82,8 @@ export default function TypeaheadSearch({
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [q, table, selectColumns, searchColumns, limit, minChars, excludeIds]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q, table, selectColumns, searchColumns, limit, minChars, excludeIdsKey]);
 
   // Close on outside click
   useEffect(() => {
