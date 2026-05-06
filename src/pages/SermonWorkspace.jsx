@@ -15,6 +15,7 @@ import {
 import WorkspaceResources from '../components/WorkspaceResources.jsx';
 import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
 import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
+import PrintExportModal from '../components/PrintExportModal.jsx';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -120,6 +121,9 @@ export default function SermonWorkspace() {
   // Which assistant turn (chat message index) to show in the diff modal.
   // null = closed.
   const [diffForIndex, setDiffForIndex] = useState(null);
+
+  // Print-to-Word modal open/closed.
+  const [printModalOpen, setPrintModalOpen] = useState(false);
 
   // Composer state
   const [draftInstruction, setDraftInstruction] = useState('');
@@ -650,6 +654,19 @@ export default function SermonWorkspace() {
           </p>
         </div>
         <div className="flex items-center gap-3 text-xs flex-wrap">
+          <button
+            type="button"
+            onClick={() => setPrintModalOpen(true)}
+            disabled={!manuscript || !manuscript.trim()}
+            className="btn-secondary text-xs disabled:opacity-50"
+            title={
+              !manuscript || !manuscript.trim()
+                ? 'Add some manuscript text first.'
+                : 'Generate a styled .docx using your print preferences.'
+            }
+          >
+            📄 Print to Word
+          </button>
           {isLocked ? (
             <>
               <span className="text-umc-700 font-medium">
@@ -826,6 +843,13 @@ export default function SermonWorkspace() {
 
       {/* Slides — anchored to manuscript paragraphs, with stranded detection */}
       <WorkspaceSlides sermon={sermon} manuscript={manuscript} />
+
+      <PrintExportModal
+        open={printModalOpen}
+        onClose={() => setPrintModalOpen(false)}
+        sermon={sermon}
+        manuscriptText={manuscript}
+      />
 
       <WorkspaceDiffModal
         open={diffForIndex !== null}
