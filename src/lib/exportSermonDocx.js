@@ -82,11 +82,17 @@ function toAlignment(s) {
 }
 
 // docx line-spacing value: in 240ths of a unit, AUTO rule means "lines"
-// so 1.5 = 360, 2.0 = 480, etc.
+// so 1.5 = 360, 2.0 = 480, etc. We also add a fixed AFTER-paragraph
+// gap of 240 twentieths (= 12pt = ~one extra single-spaced line), so
+// paragraphs visibly separate instead of running into each other —
+// pulpit-friendly when the manuscript is otherwise dense.
+const AFTER_PARAGRAPH_TWIPS = 240;
+
 function spacingFromPrefs(prefs) {
   return {
     line: Math.round((prefs.line_spacing || 1.5) * 240),
     lineRule: LineRuleType.AUTO,
+    after: AFTER_PARAGRAPH_TWIPS,
   };
 }
 
@@ -395,13 +401,51 @@ export function safeFilename(title) {
     .slice(0, 80) || 'sermon';
 }
 
+// Format a date-ish input as "Month Day Year" (e.g. "April 29 2026")
+// without commas, suitable for the filename. Accepts ISO strings, the
+// already-formatted "April 29, 2026" we get from the modal, or Date
+// objects; anything unparseable falls back to today.
+function dateForFilename(input) {
+  let d;
+  if (input instanceof Date) {
+    d = input;
+  } else if (typeof input === 'string' && input.trim()) {
+    // Try ISO first; fall back to Date.parse on the formatted string.
+    const isoLike = input.match(/^\d{4}-\d{2}-\d{2}/);
+    d = isoLike
+      ? new Date(input + (input.length === 10 ? 'T00:00:00' : ''))
+      : new Date(input);
+  } else {
+    d = new Date();
+  }
+  if (isNaN(d.getTime())) d = new Date();
+  return d
+    .toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    })
+    .replace(/,/g, '');
+}
+
 // One-shot helper: build the docx + trigger a browser download. Called
 // from the export modal.
+//
+// Filename format:
+//   {Sermon Title} - {Scripture} - {Month Day Year} - {Location}.docx
+// Components are sanitized; empty ones are dropped from the filename.
 export async function downloadSermonDocx(opts) {
   const blob = await buildSermonDocx(opts);
-  const dateSlug = (opts.dateOverride || new Date().toISOString().slice(0, 10))
-    .replace(/[^0-9-]/g, '');
-  const fname = `${safeFilename(opts.sermon?.title)} - ${dateSlug}.docx`;
+
+  const titlePart = safeFilename(opts.sermon?.title);
+  const scripturePart = safeFilename(opts.sermon?.scripture_reference || '');
+  const datePart = safeFilename(dateForFilename(opts.dateOverride));
+  const locationPart = safeFilename(opts.churchOverride || '');
+  const parts = [titlePart, scripturePart, datePart, locationPart].filter(
+    Boolean
+  );
+  const fname = parts.join(' - ') + '.docx';
+
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

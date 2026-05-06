@@ -48,7 +48,16 @@ export default function PrintExportModal({
       try {
         const prefs = user?.id ? await loadPrintPrefs(user.id) : null;
         if (cancelled) return;
-        setChurch(best?.location || prefs?.default_church_name || '');
+        // Fallback chain: most recent preaching's location → user's
+        // default_church_name from print prefs → 'Wedowee First UMC'.
+        // The hardcoded fallback exists so the field is never blank
+        // for the primary user; other pastors should set their
+        // default_church_name in /settings/print.
+        setChurch(
+          best?.location ||
+            prefs?.default_church_name ||
+            'Wedowee First UMC'
+        );
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
