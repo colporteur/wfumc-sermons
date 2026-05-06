@@ -17,6 +17,11 @@ import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
 import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
+import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
+import {
+  consumePendingBlockForSermon,
+  buildPendingBlockInstruction,
+} from '../lib/sermonStashedBlocks';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -175,6 +180,14 @@ export default function SermonWorkspace() {
         setHasVoiceGuide(Boolean(voiceRes.guide));
         setMessages(loadChat(id));
         setSelectedResources(resourceRows);
+        // If the user landed here from "Open in Workspace with block"
+        // (Pair-with-Scripture flow), there's a pending block waiting
+        // in sessionStorage. Pre-fill the chat composer with the
+        // "weave this in" instruction; the pastor sends when ready.
+        const pending = consumePendingBlockForSermon(id);
+        if (pending && pending.body) {
+          setDraftInstruction(buildPendingBlockInstruction(pending));
+        }
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
       } finally {
@@ -910,6 +923,20 @@ export default function SermonWorkspace() {
           />
         </div>
       </div>
+
+      {/* Stashed-for-next-preaching blocks (Pair-with-Scripture output) */}
+      <StashedBlocksCard
+        sermonId={sermon.id}
+        isLocked={isLocked}
+        onInsert={(block) => {
+          setDraftInstruction(
+            buildPendingBlockInstruction({
+              body: block.body,
+              source: block.source,
+            })
+          );
+        }}
+      />
 
       {/* Slides — anchored to manuscript paragraphs, with stranded detection */}
       <WorkspaceSlides

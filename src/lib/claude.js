@@ -1290,6 +1290,108 @@ export async function proposeResourceUsage({
 }
 
 /**
+ * Pair-with-Scripture — generate a self-contained sermon block by
+ * pairing a single resource (story / quote / illustration / etc.)
+ * with a scripture reference. The output is prose in the pastor's
+ * voice that can stand alone or be woven into a longer sermon.
+ *
+ * @param {Object} input
+ * @param {Object} input.resource    - the resource row
+ * @param {string} input.scripture   - scripture reference (e.g. "Acts 17:22-31")
+ * @param {string} [input.blockType] - 'opening' | 'illustration' |
+ *                                     'exegesis_application' | 'closing' |
+ *                                     'free_form' (default 'free_form')
+ * @param {number} [input.lengthTarget] - approximate word count (default 300)
+ * @param {string} [input.voiceSystemPrompt]
+ * @param {string} [input.markersReference]
+ * @returns {Promise<string>} the generated block text
+ */
+export async function pairScriptureWithResource({
+  resource,
+  scripture,
+  blockType = 'free_form',
+  lengthTarget = 300,
+  voiceSystemPrompt = '',
+  markersReference = '',
+}) {
+  if (!resource) throw new Error('No resource provided.');
+  if (!scripture || !scripture.trim()) {
+    throw new Error('Scripture reference is required.');
+  }
+
+  const blockTypeLabel = (
+    {
+      opening: 'an OPENING block — designed to start a sermon, draw the listener in, set up the scripture',
+      illustration: 'an ILLUSTRATION block — uses the resource to illuminate a point already established in the scripture',
+      exegesis_application: 'an EXEGESIS-WITH-APPLICATION block — works through the scripture passage and lands on a contemporary application that the resource embodies',
+      closing: 'a CLOSING block — designed to land a sermon, send the congregation out with the scripture\'s claim made urgent',
+      free_form: 'a self-contained sermon block of unspecified position — the pastor will decide where it lands later',
+    }[blockType] || 'a self-contained sermon block'
+  );
+
+  const baseSystem = [
+    'You are helping a United Methodist pastor generate a sermon block —',
+    'a self-contained piece of preaching prose that pairs a single resource',
+    '(story, quote, illustration, etc.) with a scripture passage.',
+    '',
+    'The block may stand alone or be woven into a longer sermon later;',
+    "don't assume what comes before or after.",
+    '',
+    'Output prose only. No headings, no bullet points, no commentary about',
+    'what you wrote. Write as the pastor would write — first person where',
+    'natural, congregational "we" where appropriate, no academic distance.',
+    '',
+    'You may use slide markers like "<SLIDE #1 – Description>" inline if',
+    "the block naturally has a visual moment, but don't force them.",
+  ].join('\n');
+
+  const systemParts = [baseSystem];
+  if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
+    systemParts.push(voiceSystemPrompt.trim());
+  }
+  if (markersReference && markersReference.trim()) {
+    systemParts.push(markersReference.trim());
+  }
+
+  // User message with the assignment.
+  const resourceLines = [];
+  if (resource.title) resourceLines.push(`Title: ${resource.title}`);
+  if (resource.resource_type)
+    resourceLines.push(`Type: ${resource.resource_type}`);
+  if (resource.source) resourceLines.push(`Source: ${resource.source}`);
+  if (resource.scripture_refs)
+    resourceLines.push(`Existing scripture refs: ${resource.scripture_refs}`);
+  if (Array.isArray(resource.themes) && resource.themes.length) {
+    resourceLines.push(`Themes: ${resource.themes.join(', ')}`);
+  }
+  if (resource.tone) resourceLines.push(`Tone: ${resource.tone}`);
+  resourceLines.push('');
+  resourceLines.push(resource.content || '(resource has no content)');
+
+  const userMsg = [
+    `Pair this resource with scripture and write ${blockTypeLabel}.`,
+    `Aim for approximately ${lengthTarget} words. Slight variation is fine;`,
+    "don't pad or truncate to hit the number exactly.",
+    '',
+    `Scripture: ${scripture.trim()}`,
+    '',
+    'Resource:',
+    resourceLines.join('\n'),
+  ].join('\n');
+
+  const response = await callClaude(
+    {
+      system: systemParts.join('\n\n'),
+      messages: [{ role: 'user', content: userMsg }],
+      // ~500 words ≈ 700 tokens, give room for longer or with markers.
+      max_tokens: 2500,
+    },
+    { timeoutMs: 120000 }
+  );
+  return (extractText(response) || '').trim();
+}
+
+/**
  * Sermon Workspace — propose slides for a manuscript.
  *
  * Sends the numbered manuscript paragraphs to Claude and asks for a

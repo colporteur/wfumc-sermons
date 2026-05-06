@@ -10,6 +10,7 @@ import {
   removeResourceImage,
 } from '../lib/resourceImages';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
+import PairWithScriptureModal from '../components/PairWithScriptureModal.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 const TYPE_CHOICES = [
@@ -43,6 +44,7 @@ export default function ResourceDetail() {
   // Images attached to this resource (resource_images rows)
   const [images, setImages] = useState([]);
   const [editing, setEditing] = useState(false);
+  const [pairOpen, setPairOpen] = useState(false);
   const [draft, setDraft] = useState(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -645,7 +647,15 @@ export default function ResourceDetail() {
                   )}
                 </div>
               </div>
-              <div className="flex gap-2 shrink-0">
+              <div className="flex flex-wrap gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setPairOpen(true)}
+                  className="btn-primary text-sm"
+                  title="Pair this resource with a scripture passage and let Claude generate a sermon block in your voice."
+                >
+                  ✨ Pair with Scripture
+                </button>
                 <button
                   type="button"
                   onClick={startEdit}
@@ -964,6 +974,12 @@ export default function ResourceDetail() {
           </ul>
         )}
       </div>
+
+      <PairWithScriptureModal
+        open={pairOpen}
+        onClose={() => setPairOpen(false)}
+        resource={resource}
+      />
     </div>
   );
 }

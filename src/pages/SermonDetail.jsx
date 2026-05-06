@@ -12,6 +12,7 @@ import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
 import PreachingsCard from '../components/PreachingsCard.jsx';
 import ManuscriptWithSlides from '../components/ManuscriptWithSlides.jsx';
+import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import { fetchSlideImages } from '../lib/sermonSlideImages';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -671,6 +672,8 @@ export default function SermonDetail() {
         setSermon={setSermon}
         slideImages={slideImages}
       />
+
+      <StashedBlocksCard sermonId={sermon.id} isLocked={sermon.manuscript_locked === true} />
 
       {showMerge && (
         <MergeSermonsModal
