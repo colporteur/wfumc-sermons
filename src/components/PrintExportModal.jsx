@@ -26,32 +26,40 @@ export default function PrintExportModal({
   const [date, setDate] = useState('');
   const [church, setChurch] = useState('');
 
-  // Reset / hydrate when the modal opens.
+  // Reset / hydrate when the modal opens. Depending only on `open`
+  // (with eslint-disable for the missing deps) avoids a re-render loop
+  // when the parent passes an inline `preachings={[]}` default — that
+  // array literal is a new reference on every parent render, which
+  // would otherwise re-fire this effect indefinitely and keep
+  // loadingPrefs pinned at true.
   useEffect(() => {
     if (!open) return;
     setError(null);
     setExporting(false);
 
-    // Best preaching to take defaults from = most recent (preachings is
-    // already ordered most-recent first by the parent; fall back to
-    // first non-null).
     const best =
       preachings.find((p) => p.preached_at) || preachings[0] || null;
     const todayIso = new Date().toISOString().slice(0, 10);
     setDate(best?.preached_at || todayIso);
 
+    let cancelled = false;
     setLoadingPrefs(true);
     (async () => {
       try {
         const prefs = user?.id ? await loadPrintPrefs(user.id) : null;
+        if (cancelled) return;
         setChurch(best?.location || prefs?.default_church_name || '');
       } catch (e) {
-        setError(e.message || String(e));
+        if (!cancelled) setError(e.message || String(e));
       } finally {
-        setLoadingPrefs(false);
+        if (!cancelled) setLoadingPrefs(false);
       }
     })();
-  }, [open, user?.id, preachings]);
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   if (!open) return null;
 
@@ -151,7 +159,6 @@ export default function PrintExportModal({
               onChange={(e) => setChurch(e.target.value)}
               placeholder="e.g. Wedowee First UMC"
               className="input w-full"
-              disabled={loadingPrefs}
             />
           </label>
 
@@ -167,7 +174,7 @@ export default function PrintExportModal({
             <button
               type="button"
               onClick={handleExport}
-              disabled={exporting || loadingPrefs}
+              disabled={exporting}
               className="btn-primary text-sm disabled:opacity-50"
             >
               {exporting ? 'Building…' : 'Export to Word'}
