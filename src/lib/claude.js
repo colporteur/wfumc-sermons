@@ -148,6 +148,99 @@ function parseJsonArrayLoose(text) {
 }
 
 /**
+ * Hardened JSON-array parser for long Claude responses where the strict
+ * loose parser fails. Tries (in order):
+ *
+ *   1. The strict loose parser.
+ *   2. Same input with trailing commas stripped (Claude sometimes emits
+ *      "[{...}, {...},]" which JSON.parse rejects).
+ *   3. Walk the input character by character tracking brace depth and
+ *      string state, and collect every complete top-level object inside
+ *      the array. This recovers when the response was truncated mid-
+ *      object — we keep the N-1 complete objects and silently drop the
+ *      truncated tail.
+ *
+ * Returns an array (possibly empty) on success, or null if no useful
+ * structure could be extracted.
+ */
+function parseJsonArrayRobust(text) {
+  if (!text) return null;
+
+  // Stage 1: strict loose parser
+  const strict = parseJsonArrayLoose(text);
+  if (Array.isArray(strict)) return strict;
+
+  // Strip code-fence wrapper if present, same as parseJsonArrayLoose.
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  const candidate = fenceMatch ? fenceMatch[1] : text;
+  const start = candidate.indexOf('[');
+  if (start === -1) return null;
+  const inside = candidate.slice(start);
+
+  // Stage 2: strip trailing commas
+  const noTrailingCommas = inside.replace(/,(\s*[\]\}])/g, '$1');
+  const cEnd = noTrailingCommas.lastIndexOf(']');
+  if (cEnd !== -1) {
+    try {
+      const parsed = JSON.parse(noTrailingCommas.slice(0, cEnd + 1));
+      if (Array.isArray(parsed)) return parsed;
+    } catch {
+      /* fall through to recovery */
+    }
+  }
+
+  // Stage 3: walk + recover complete objects.
+  const objects = [];
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let objStart = -1;
+  // Skip the opening [ at index 0
+  for (let i = 1; i < inside.length; i++) {
+    const ch = inside[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\') {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+
+    if (ch === '{') {
+      if (depth === 0) objStart = i;
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0 && objStart !== -1) {
+        const objText = inside.slice(objStart, i + 1);
+        try {
+          objects.push(JSON.parse(objText));
+        } catch {
+          // Try once more after stripping trailing commas inside.
+          try {
+            const fixed = objText.replace(/,(\s*[\]\}])/g, '$1');
+            objects.push(JSON.parse(fixed));
+          } catch {
+            /* skip malformed */
+          }
+        }
+        objStart = -1;
+      }
+    } else if (ch === ']' && depth === 0) {
+      // Reached the close of the outer array.
+      break;
+    }
+  }
+  return objects.length > 0 ? objects : null;
+}
+
+/**
  * Analyze a sermon-prep resource (story / quote / illustration / joke /
  * note) and suggest themes, scripture connections, and tone.
  *
@@ -1156,14 +1249,23 @@ export async function suggestSlidesForManuscript({
     {
       system,
       messages: [{ role: 'user', content: userMsg }],
-      max_tokens: 8000,
+      // Bumped from 8k → 16k so 12-15 slides with full bodies + notes
+      // don't get truncated mid-array.
+      max_tokens: 16000,
     },
     { timeoutMs: 180000 }
   );
   const text = extractText(response);
-  const parsed = parseJsonArrayLoose(text);
-  if (!Array.isArray(parsed)) {
-    throw new Error("Couldn't parse Claude's slide suggestions as a JSON array.");
+  // Use the robust parser: handles trailing commas and recovers complete
+  // objects when the response was truncated mid-element.
+  const parsed = parseJsonArrayRobust(text);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    const snippet = (text || '').slice(0, 200).replace(/\s+/g, ' ').trim();
+    throw new Error(
+      "Couldn't parse Claude's slide suggestions as a JSON array. " +
+        `Response started with: "${snippet}${snippet.length >= 200 ? '…' : ''}". ` +
+        'Try clicking "Generate suggestions" again.'
+    );
   }
 
   const validTypes = new Set(['title', 'scripture', 'quote', 'image', 'content', 'blank']);
