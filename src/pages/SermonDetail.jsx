@@ -579,6 +579,13 @@ export default function SermonDetail() {
                 >
                   Open Workspace ↗
                 </Link>
+                <Link
+                  to={`/sermons/${sermon.id}/slide-deck`}
+                  className="btn-secondary text-sm whitespace-nowrap"
+                  title="Upload the finished JPGs from PowerPoint and reconcile them with the manuscript's <SLIDE> markers."
+                >
+                  🖼️ Slide Deck
+                </Link>
                 <button
                   type="button"
                   onClick={startEdit}

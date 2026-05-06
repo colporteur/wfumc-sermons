@@ -22,6 +22,7 @@ import PrintPreferences from './pages/PrintPreferences.jsx';
 import Settings from './pages/Settings.jsx';
 import SermonWorkspace from './pages/SermonWorkspace.jsx';
 import SermonNewWorkspace from './pages/SermonNewWorkspace.jsx';
+import SermonSlideDeck from './pages/SermonSlideDeck.jsx';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/sermons/new/workspace" element={<SermonNewWorkspace />} />
         <Route path="/sermons/:id" element={<SermonDetail />} />
         <Route path="/sermons/:id/workspace" element={<SermonWorkspace />} />
+        <Route path="/sermons/:id/slide-deck" element={<SermonSlideDeck />} />
         <Route path="/resources" element={<ResourceList />} />
         <Route path="/resources/new" element={<ResourceNew />} />
         <Route path="/resources/extract" element={<ResourceExtract />} />

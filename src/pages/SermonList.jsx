@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import { booksFromReference } from '../lib/scripture';
+import { fetchSlideImageCountsByUser } from '../lib/sermonSlideImages';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -79,6 +80,9 @@ export default function SermonList() {
   const [latestPreachedBySermon, setLatestPreachedBySermon] = useState(
     new Map()
   );
+  // Number of slide-deck images uploaded per sermon. Used for the
+  // 🖼️ badge on each row in the list.
+  const [slideImageCounts, setSlideImageCounts] = useState(new Map());
   const [searchParams, setSearchParams] = useSearchParams();
   const filters = useMemo(
     () => filtersFromSearch(searchParams),
@@ -99,7 +103,7 @@ export default function SermonList() {
       setLoading(true);
       setError(null);
       try {
-        const [sermonRes, preachRes] = await Promise.all([
+        const [sermonRes, preachRes, slideCountsMap] = await Promise.all([
           withTimeout(
             supabase
               .from('sermons')
@@ -115,6 +119,8 @@ export default function SermonList() {
               .select('sermon_id, preached_at, is_at_our_church')
               .eq('owner_user_id', user.id)
           ),
+          // Slide-image counts for the 🖼️ badge per sermon.
+          fetchSlideImageCountsByUser(user.id).catch(() => new Map()),
         ]);
         if (sermonRes.error) throw sermonRes.error;
         if (preachRes.error) throw preachRes.error;
@@ -133,6 +139,7 @@ export default function SermonList() {
           }
           setWfumcSermonIds(wfumc);
           setLatestPreachedBySermon(latest);
+          setSlideImageCounts(slideCountsMap || new Map());
         }
       } catch (e) {
         if (!cancelled) setError(e.message || String(e));
@@ -456,6 +463,14 @@ export default function SermonList() {
                       {wfumcSermonIds.has(s.id) && (
                         <span className="px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-umc-50 text-umc-900">
                           WFUMC
+                        </span>
+                      )}
+                      {slideImageCounts.get(s.id) > 0 && (
+                        <span
+                          className="px-1.5 py-0.5 text-[10px] uppercase tracking-wide rounded bg-amber-50 text-amber-900 border border-amber-200"
+                          title={`${slideImageCounts.get(s.id)} slide image${slideImageCounts.get(s.id) === 1 ? '' : 's'} uploaded. Click sermon to view the deck.`}
+                        >
+                          🖼️ {slideImageCounts.get(s.id)}
                         </span>
                       )}
                     </div>

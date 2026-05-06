@@ -667,6 +667,13 @@ export default function SermonWorkspace() {
           >
             📄 Print to Word
           </button>
+          <Link
+            to={`/sermons/${sermon.id}/slide-deck`}
+            className="btn-secondary text-xs whitespace-nowrap"
+            title="Upload the finished JPGs from PowerPoint and reconcile them with manuscript markers."
+          >
+            🖼️ Slide Deck
+          </Link>
           {isLocked ? (
             <>
               <span className="text-umc-700 font-medium">
