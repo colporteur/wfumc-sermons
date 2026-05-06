@@ -14,6 +14,7 @@ import {
   paragraphPreview,
 } from '../lib/paragraphs';
 import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
+import { downloadSermonPptx } from '../lib/exportSermonPptx';
 
 // Slides panel for the Sermon Workspace. Lives below the chat /
 // manuscript pair; collapsible, with a stranded-count badge in the
@@ -48,6 +49,20 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
   const [addForm, setAddForm] = useState(null);
   const [busyId, setBusyId] = useState(null); // 'new' or a slide id
   const [suggestModalOpen, setSuggestModalOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExportPptx = async () => {
+    if (slides.length === 0) return;
+    setExporting(true);
+    setError(null);
+    try {
+      await downloadSermonPptx({ sermon, slides });
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // Live paragraph list — the anchor resolver works against this.
   const paragraphs = useMemo(
@@ -352,7 +367,20 @@ export default function WorkspaceSlides({ sermon, manuscript }) {
           </span>
         </button>
         {!collapsed && !adding && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleExportPptx}
+              disabled={slides.length === 0 || exporting}
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                slides.length === 0
+                  ? 'Add at least one slide first.'
+                  : 'Generate a 16:9 PowerPoint deck from your slides. Open in PowerPoint and apply your theme via Design → Themes.'
+              }
+            >
+              {exporting ? 'Building…' : '📊 Export to PowerPoint'}
+            </button>
             <button
               type="button"
               onClick={() => setSuggestModalOpen(true)}
