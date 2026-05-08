@@ -17,7 +17,10 @@ import {
   clearSlideMarkersFromManuscript,
   renumberSlideMarkersInManuscript,
   findManuscriptSlideMarkers,
+  splitIntoSentences,
+  looksLikeScriptureReference,
 } from '../lib/paragraphs';
+import { lookupScriptureNRSVUe } from '../lib/claude';
 import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
 import { downloadSermonPptx } from '../lib/exportSermonPptx';
 
@@ -131,13 +134,17 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
     );
 
     // Filter out markers that already have a corresponding slide:
-    // same description AND same anchor paragraph.
+    // same description AND same anchor paragraph. Match by marker_description
+    // (preferred) OR by title (back-compat for slides created before the
+    // marker_description column existed).
     const newMarkers = markers.filter(
       (m) =>
         !slides.some(
           (s) =>
-            s.title === m.description &&
-            s.anchor_paragraph_idx === m.paragraphIdx
+            s.anchor_paragraph_idx === m.paragraphIdx &&
+            ((s.marker_description &&
+              s.marker_description === m.description) ||
+              s.title === m.description)
         )
     );
     const skipped = markers.length - newMarkers.length;
@@ -173,11 +180,12 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
           ownerUserId,
           sortOrder: startOrder + i,
           slideType: 'content',
-          title: m.description,
+          title: '',
           body: '',
           notes: '',
           anchorParagraphText: m.paragraphText,
           anchorParagraphIdx: m.paragraphIdx,
+          markerDescription: m.description,
         });
         created.push(row);
       }
@@ -285,11 +293,12 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
           ownerUserId,
           sortOrder: i,
           slideType: 'content',
-          title: m.description,
+          title: '',
           body: '',
           notes: '',
           anchorParagraphText: m.paragraphText,
           anchorParagraphIdx: m.paragraphIdx,
+          markerDescription: m.description,
         });
         created.push(row);
       }
@@ -438,6 +447,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
     title: '',
     body: '',
     notes: '',
+    marker_description: '',
     anchor_paragraph_idx: '', // string for select-friendliness; '' = unanchored
     ...overrides,
   });
@@ -477,6 +487,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
         notes: addForm.notes,
         anchorParagraphText: anchorText,
         anchorParagraphIdx: anchorIdx,
+        markerDescription: addForm.marker_description,
       });
       setSlides((prev) => [...prev, created]);
       cancelAdd();
@@ -494,6 +505,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
       title: slide.title || '',
       body: slide.body || '',
       notes: slide.notes || '',
+      marker_description: slide.marker_description || '',
       anchor_paragraph_idx:
         slide.anchor_paragraph_idx === null ||
         slide.anchor_paragraph_idx === undefined
@@ -523,6 +535,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
         title: editForm.title,
         body: editForm.body,
         notes: editForm.notes,
+        marker_description: editForm.marker_description,
         anchor_paragraph_text: anchorText,
         anchor_paragraph_idx: anchorIdx,
       });
@@ -536,9 +549,10 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
   };
 
   const handleDelete = async (slide, slideNumber) => {
+    const label = slide.title || slide.marker_description || '';
     if (
       !window.confirm(
-        `Delete slide #${slideNumber}${slide.title ? ` ("${slide.title}")` : ''}?`
+        `Delete slide #${slideNumber}${label ? ` ("${label}")` : ''}?`
       )
     ) {
       return;
@@ -921,7 +935,18 @@ function SlideRow({
           {slide.title && (
             <span className="text-sm text-gray-800">{slide.title}</span>
           )}
+          {!slide.title && slide.marker_description && (
+            <span className="text-sm text-gray-600 italic">
+              {slide.marker_description}
+            </span>
+          )}
         </div>
+        {slide.title && slide.marker_description &&
+          slide.title !== slide.marker_description && (
+            <p className="text-[10px] text-gray-500 italic mt-0.5">
+              from marker: {slide.marker_description}
+            </p>
+          )}
         {slide.body && (
           <p className="text-xs text-gray-600 mt-1 whitespace-pre-wrap">
             {slide.body}
@@ -1056,6 +1081,45 @@ function AnchorPicker({ paragraphs, onPick, disabled, label }) {
 
 function SlideForm({ form, setForm, paragraphs, onSave, onCancel, saving, saveLabel }) {
   const update = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const [scriptureLoading, setScriptureLoading] = useState(false);
+  const [scriptureError, setScriptureError] = useState(null);
+
+  const desc = (form.marker_description || '').trim();
+  const hasDesc = desc.length > 0;
+  const descLooksScripture = hasDesc && looksLikeScriptureReference(desc);
+
+  // Anchored paragraph for the sentence picker. Anchor stored as a
+  // string in form state ('' = unanchored).
+  const anchorIdxNum =
+    form.anchor_paragraph_idx === '' || form.anchor_paragraph_idx === null
+      ? null
+      : Number(form.anchor_paragraph_idx);
+  const anchorPara =
+    anchorIdxNum !== null && Number.isInteger(anchorIdxNum)
+      ? paragraphs[anchorIdxNum]
+      : null;
+  const sentences = anchorPara ? splitIntoSentences(anchorPara.text) : [];
+
+  const handleLookupScripture = async () => {
+    if (!hasDesc) return;
+    setScriptureLoading(true);
+    setScriptureError(null);
+    try {
+      const text = await lookupScriptureNRSVUe(desc);
+      update('body', text);
+    } catch (e) {
+      setScriptureError(e.message || String(e));
+    } finally {
+      setScriptureLoading(false);
+    }
+  };
+
+  const handlePickSentence = (sentence) => {
+    if (!sentence) return;
+    const current = (form.body || '').trim();
+    update('body', current ? current + ' ' + sentence : sentence);
+  };
+
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -1093,9 +1157,40 @@ function SlideForm({ form, setForm, paragraphs, onSave, onCancel, saving, saveLa
           </select>
         </label>
       </div>
+
+      {/* Slide description — captured from the manuscript marker. The
+          pastor can copy it into Title or Body via the quick-links below. */}
       <label className="block text-xs">
         <span className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">
-          Title (heading on the slide)
+          Slide description
+          <span className="ml-1 normal-case tracking-normal text-gray-400">
+            (text after the dash in the manuscript &lt;SLIDE&gt; marker)
+          </span>
+        </span>
+        <input
+          type="text"
+          value={form.marker_description || ''}
+          onChange={(e) => update('marker_description', e.target.value)}
+          className="input w-full text-sm"
+          placeholder='e.g. "Acts 17:32-34" or "The world is changing fast"'
+        />
+      </label>
+
+      <label className="block text-xs">
+        <span className="flex items-baseline justify-between mb-1">
+          <span className="block text-[10px] uppercase tracking-wide text-gray-500">
+            Title (heading on the slide)
+          </span>
+          {hasDesc && (
+            <button
+              type="button"
+              onClick={() => update('title', desc)}
+              className="text-[10px] text-umc-700 hover:text-umc-900 underline"
+              title="Copy slide description into the title field"
+            >
+              ↳ Use description
+            </button>
+          )}
         </span>
         <input
           type="text"
@@ -1105,9 +1200,60 @@ function SlideForm({ form, setForm, paragraphs, onSave, onCancel, saving, saveLa
           placeholder="Optional"
         />
       </label>
+
       <label className="block text-xs">
-        <span className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">
-          Body (main slide content)
+        <span className="flex items-baseline justify-between gap-2 flex-wrap mb-1">
+          <span className="block text-[10px] uppercase tracking-wide text-gray-500">
+            Body (main slide content)
+          </span>
+          <span className="flex items-baseline gap-3 flex-wrap">
+            {hasDesc && (
+              <button
+                type="button"
+                onClick={() => update('body', desc)}
+                className="text-[10px] text-umc-700 hover:text-umc-900 underline"
+                title="Copy slide description into the body field"
+              >
+                ↳ Use description
+              </button>
+            )}
+            {descLooksScripture && (
+              <button
+                type="button"
+                onClick={handleLookupScripture}
+                disabled={scriptureLoading}
+                className="text-[10px] text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+                title={`Fetch ${desc} from the NRSVUe translation via Claude`}
+              >
+                {scriptureLoading
+                  ? 'Asking Claude…'
+                  : `✨ Look up ${desc} (NRSVUe)`}
+              </button>
+            )}
+            {sentences.length > 0 && (
+              <select
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v) {
+                    handlePickSentence(v);
+                    e.target.value = '';
+                  }
+                }}
+                defaultValue=""
+                className="text-[10px] border border-gray-300 rounded px-1 py-0.5 bg-white max-w-[220px]"
+                title="Append a sentence from the anchor paragraph to the body"
+              >
+                <option value="" disabled>
+                  ↳ Insert sentence from ¶{anchorIdxNum + 1}…
+                </option>
+                {sentences.map((s, i) => (
+                  <option key={i} value={s}>
+                    {paragraphPreview(s, 80)}
+                  </option>
+                ))}
+              </select>
+            )}
+          </span>
         </span>
         <textarea
           value={form.body}
@@ -1115,7 +1261,13 @@ function SlideForm({ form, setForm, paragraphs, onSave, onCancel, saving, saveLa
           rows={3}
           className="input w-full text-sm"
         />
+        {scriptureError && (
+          <p className="text-[10px] text-red-700 mt-1">
+            Scripture lookup failed: {scriptureError}
+          </p>
+        )}
       </label>
+
       <label className="block text-xs">
         <span className="block text-[10px] uppercase tracking-wide text-gray-500 mb-1">
           Speaker notes (in the .pptx notes pane, not on the slide)
@@ -1127,6 +1279,7 @@ function SlideForm({ form, setForm, paragraphs, onSave, onCancel, saving, saveLa
           className="input w-full text-sm"
         />
       </label>
+
       <div className="flex items-center justify-end gap-2 pt-1">
         <button
           type="button"

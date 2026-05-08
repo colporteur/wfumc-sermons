@@ -36,6 +36,7 @@ export async function createSlide({
   anchorParagraphText = null,
   anchorParagraphIdx = null,
   imageResourceId = null,
+  markerDescription = null,
 }) {
   if (!sermonId || !ownerUserId) throw new Error('Missing sermon or user');
   const { data, error } = await withTimeout(
@@ -55,6 +56,7 @@ export async function createSlide({
             ? null
             : Number(anchorParagraphIdx),
         image_resource_id: imageResourceId || null,
+        marker_description: markerDescription?.trim?.() || null,
       })
       .select('*')
       .single()
@@ -73,11 +75,17 @@ export async function updateSlide(slideId, patch) {
     'anchor_paragraph_idx',
     'image_resource_id',
     'sort_order',
+    'marker_description',
   ];
   const payload = {};
   for (const k of writable) {
     if (patch[k] === undefined) continue;
-    if (k === 'title' || k === 'body' || k === 'notes') {
+    if (
+      k === 'title' ||
+      k === 'body' ||
+      k === 'notes' ||
+      k === 'marker_description'
+    ) {
       payload[k] = patch[k]?.trim?.() || null;
     } else if (k === 'anchor_paragraph_text') {
       payload[k] = patch[k] || null;

@@ -115,6 +115,53 @@ export function paragraphPreview(text, maxLen = 80) {
   return cleaned.slice(0, maxLen - 1) + '…';
 }
 
+// Split a paragraph into sentences, keeping each terminator. Used by
+// the SlideForm's "Insert sentence from anchor paragraph" picker so
+// the pastor can grab a single sentence to drop into the slide body.
+//
+// Matches sentence-shaped chunks ending in . ! ? (or runs like ?!).
+// Strips inline <SLIDE …> markers before splitting so the picker
+// doesn't include them as candidate sentences.
+export function splitIntoSentences(text) {
+  if (!text) return [];
+  // Strip every <SLIDE> marker (numbered or not) before splitting so
+  // the picker doesn't surface them as candidate sentences.
+  const stripped = text.replace(
+    /<SLIDE(?:\s+#?\d+)?\s*[-–—]\s*[^>]+>/g,
+    ''
+  );
+  // Match a sentence as: any non-terminator chars followed by one or
+  // more terminators (handles "?!", "..." etc.). Trailing text without
+  // a terminator is captured separately below.
+  const matches = stripped.match(/[^.!?]+[.!?]+/g) || [];
+  const sentences = matches.map((s) => s.trim()).filter(Boolean);
+  // Capture any trailing text past the last terminator.
+  const lastIdx = stripped.search(/[.!?](?=[^.!?]*$)/);
+  if (lastIdx !== -1) {
+    const tail = stripped.slice(lastIdx + 1).trim();
+    if (tail) sentences.push(tail);
+  } else {
+    const all = stripped.trim();
+    if (all && sentences.length === 0) sentences.push(all);
+  }
+  return sentences;
+}
+
+// Heuristic: does this string look like a scripture reference (e.g.
+// "John 3:16", "Acts 17:32-34", "1 Corinthians 13", "Song of Songs 4:1")?
+// Used to gate the SlideForm's "Look up NRSVUe" button — we only show
+// it when the marker description plausibly is a reference.
+export function looksLikeScriptureReference(text) {
+  if (!text) return false;
+  const s = text.trim();
+  // Optional leading 1/2/3 (1 John, 2 Kings), then a Book name (one or
+  // two capitalized words), then chapter, optional :verse or :verse-verse,
+  // optionally followed by extra refs separated by ; or ,.
+  const re =
+    /^([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+(\s*[-–—]\s*\d+)?)?(\s*[;,]\s*([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+(\s*[-–—]\s*\d+)?)?)*$/;
+  return re.test(s);
+}
+
 // =====================================================================
 // Manuscript ↔ slide marker sync
 //

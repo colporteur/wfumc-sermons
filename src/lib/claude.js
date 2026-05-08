@@ -1558,3 +1558,36 @@ export async function suggestSlidesForManuscript({
       };
     });
 }
+
+/**
+ * Quick scripture lookup. Asks Claude to provide the verses for a
+ * given reference in the NRSVUe translation, formatted as plain text
+ * with each verse prefixed `[N] `. Mirrors the bulletin app's
+ * ScriptureFields autoFill prompt so the output is consistent across
+ * apps.
+ *
+ * Used by the Workspace SlideForm's "Look up scripture (NRSVUe)"
+ * quick-link to populate the slide body when the marker description
+ * is a scripture reference.
+ *
+ * @param {string} reference - e.g. "John 3:16-21", "Acts 17:32-34"
+ * @returns {Promise<string>} the verse text, ready to drop into a slide body.
+ */
+export async function lookupScriptureNRSVUe(reference) {
+  const ref = (reference || '').trim();
+  if (!ref) throw new Error('No scripture reference provided.');
+  const result = await callClaude({
+    system:
+      'You are helping prepare a church slide. When asked for a scripture passage, return ONLY the verses (no introduction, no commentary, no copyright notice). Format each verse with its number in brackets at the start, like "[1] In the beginning..." Use plain text only — no markdown.',
+    messages: [
+      {
+        role: 'user',
+        content: `Please provide ${ref} in the NRSVUe translation.`,
+      },
+    ],
+    max_tokens: 2000,
+  });
+  const text = result?.content?.[0]?.text?.trim();
+  if (!text) throw new Error('Claude returned no text.');
+  return text;
+}
