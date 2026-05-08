@@ -107,6 +107,22 @@ export async function deleteSlide(slideId) {
   if (error) throw error;
 }
 
+// Wipe every slide for a sermon. Used by the "Force manuscript → panel"
+// rebuild flow, where we want the new slide list to exactly mirror the
+// manuscript markers without any leftover panel rows.
+export async function deleteAllSlidesForSermon(sermonId) {
+  if (!sermonId) return 0;
+  const { data, error } = await withTimeout(
+    supabase
+      .from('workspace_slides')
+      .delete()
+      .eq('sermon_id', sermonId)
+      .select('id')
+  );
+  if (error) throw error;
+  return (data ?? []).length;
+}
+
 // Reorder slides by writing new sort_order values. Pass an array of
 // slide IDs in the desired order; sort_orders are renumbered 0..N.
 export async function reorderSlides(orderedIds) {

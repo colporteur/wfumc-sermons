@@ -18,10 +18,14 @@ import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
+import ManuscriptEditor, {
+  ParagraphNumberToggle,
+} from '../components/ManuscriptEditor.jsx';
 import {
   consumePendingBlockForSermon,
   buildPendingBlockInstruction,
 } from '../lib/sermonStashedBlocks';
+import { splitManuscriptParagraphs } from '../lib/paragraphs';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -47,6 +51,7 @@ import {
 const AUTOSAVE_DEBOUNCE_MS = 3000;
 const CHAT_STORAGE_PREFIX = 'wfumc-workspace-chat:';
 const RESOURCES_STORAGE_PREFIX = 'wfumc-workspace-resources:';
+const PARA_NUMBERS_STORAGE_KEY = 'wfumc-workspace-show-paragraph-numbers';
 
 function loadChat(sermonId) {
   try {
@@ -143,6 +148,31 @@ export default function SermonWorkspace() {
   // Manual save state
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
+
+  // Paragraph-number gutter on the manuscript editor. Toggle persisted
+  // app-wide (not per-sermon) since it's a viewing preference.
+  const [showParagraphNumbers, setShowParagraphNumbers] = useState(() => {
+    try {
+      return sessionStorage.getItem(PARA_NUMBERS_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [currentParagraphIdx, setCurrentParagraphIdx] = useState(-1);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(
+        PARA_NUMBERS_STORAGE_KEY,
+        showParagraphNumbers ? '1' : '0'
+      );
+    } catch {
+      /* noop */
+    }
+  }, [showParagraphNumbers]);
+  const totalParagraphs = useMemo(
+    () => splitManuscriptParagraphs(manuscript || '').length,
+    [manuscript]
+  );
 
   // Refs for auto-scroll + autosave timer
   const chatEndRef = useRef(null);
@@ -895,7 +925,7 @@ export default function SermonWorkspace() {
 
         {/* Manuscript pane */}
         <div className="card flex flex-col" style={{ minHeight: '70vh' }}>
-          <div className="flex items-baseline justify-between gap-2 mb-2">
+          <div className="flex items-baseline justify-between gap-2 mb-2 flex-wrap">
             <h2 className="font-serif text-lg text-umc-900">
               Manuscript
               {isLocked && (
@@ -904,22 +934,32 @@ export default function SermonWorkspace() {
                 </span>
               )}
             </h2>
-            <span className="text-xs text-gray-500">
-              {countWords(manuscript)} words
-            </span>
+            <div className="flex items-baseline gap-3">
+              <ParagraphNumberToggle
+                checked={showParagraphNumbers}
+                onChange={setShowParagraphNumbers}
+                currentIdx={currentParagraphIdx}
+                total={totalParagraphs}
+              />
+              <span className="text-xs text-gray-500">
+                {countWords(manuscript)} words
+              </span>
+            </div>
           </div>
-          <textarea
+          <ManuscriptEditor
             value={manuscript}
             onChange={(e) => setManuscript(e.target.value)}
             readOnly={isLocked}
             placeholder={
               "The manuscript will appear here. Hand-edit freely between Claude turns — your edits are preserved and Claude sees them on the next turn."
             }
-            className={
-              'flex-1 w-full input font-serif text-sm leading-relaxed resize-none ' +
+            textareaClassName={
+              'w-full input font-serif text-sm leading-relaxed ' +
               (isLocked ? 'bg-gray-50 text-gray-700 cursor-default' : '')
             }
-            style={{ minHeight: '60vh' }}
+            textareaStyle={{ minHeight: '60vh' }}
+            showNumbers={showParagraphNumbers}
+            onCurrentParagraphChange={setCurrentParagraphIdx}
           />
         </div>
       </div>

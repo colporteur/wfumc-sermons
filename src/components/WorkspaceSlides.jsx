@@ -5,6 +5,7 @@ import {
   createSlide,
   updateSlide,
   deleteSlide,
+  deleteAllSlidesForSermon,
   reorderSlides,
   syncAnchorIndices,
 } from '../lib/workspaceSlides';
@@ -13,6 +14,7 @@ import {
   resolveAnchor,
   paragraphPreview,
   insertSlideMarkersIntoManuscript,
+  clearSlideMarkersFromManuscript,
   findManuscriptSlideMarkers,
 } from '../lib/paragraphs';
 import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
@@ -187,6 +189,143 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
         setSlides((prev) => [...prev, ...created]);
       }
     }
+  };
+
+  // Strip every <SLIDE> marker from the manuscript. Useful when the
+  // manuscript has accumulated stale markers from previous insert runs
+  // and you want a clean slate before re-running "Insert markers".
+  const handleClearMarkers = () => {
+    if (!onManuscriptChange) {
+      setError('Manuscript is locked or not editable. Unlock to clear markers.');
+      return;
+    }
+    const { newText, removed } = clearSlideMarkersFromManuscript(
+      manuscript || ''
+    );
+    if (removed === 0) {
+      setError('No <SLIDE> markers found in the manuscript.');
+      return;
+    }
+    if (
+      !window.confirm(
+        `Remove ${removed} <SLIDE> marker${removed === 1 ? '' : 's'} from the manuscript?\n\n` +
+          'The slide list in the panel is untouched — only the inline markers in the manuscript text are stripped.'
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    onManuscriptChange(newText);
+  };
+
+  // "Manuscript wins": delete every panel slide and rebuild the list
+  // from the <SLIDE #N – Description> markers in the manuscript. Use
+  // this when you've been editing markers inline and want the panel to
+  // catch up rather than the other way around.
+  const handleForceManuscriptToPanel = async () => {
+    if (!sermonId || !ownerUserId) return;
+    if (!manuscript || !manuscript.trim()) {
+      setError('Manuscript is empty.');
+      return;
+    }
+    const markers = findManuscriptSlideMarkers(manuscript);
+    if (markers.length === 0) {
+      setError(
+        'No <SLIDE> markers found in the manuscript. Add markers like "<SLIDE #1 – Description>" first, or use "Insert markers".'
+      );
+      return;
+    }
+    markers.sort(
+      (a, b) => a.number - b.number || a.paragraphIdx - b.paragraphIdx
+    );
+    if (
+      !window.confirm(
+        `Force panel to match manuscript?\n\n` +
+          `• Delete all ${slides.length} existing slide${slides.length === 1 ? '' : 's'} in the panel\n` +
+          `• Recreate ${markers.length} slide${markers.length === 1 ? '' : 's'} from the markers in the manuscript\n\n` +
+          `New slides default to the "Content" type. Slide bodies, notes, and image uploads on the deleted slides will NOT be carried over — only the marker description becomes the new slide title.`
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    try {
+      await deleteAllSlidesForSermon(sermonId);
+      const created = [];
+      for (let i = 0; i < markers.length; i++) {
+        const m = markers[i];
+        const row = await createSlide({
+          sermonId,
+          ownerUserId,
+          sortOrder: i,
+          slideType: 'content',
+          title: m.description,
+          body: '',
+          notes: '',
+          anchorParagraphText: m.paragraphText,
+          anchorParagraphIdx: m.paragraphIdx,
+        });
+        created.push(row);
+      }
+      setSlides(created);
+    } catch (e) {
+      setError(e.message || String(e));
+      // Best-effort: refetch so the panel reflects whatever DB state
+      // actually landed (delete may have succeeded, recreate may have
+      // partially failed).
+      try {
+        const rows = await fetchSlides(sermonId);
+        setSlides(rows);
+      } catch {
+        /* swallow — error already surfaced */
+      }
+    }
+  };
+
+  // "Panel wins": clear every <SLIDE> marker from the manuscript, then
+  // re-insert markers for the current panel slide list. Net effect:
+  // manuscript markers exactly mirror the panel.
+  const handleForcePanelToManuscript = () => {
+    if (!onManuscriptChange) {
+      setError('Manuscript is locked or not editable. Unlock to write markers.');
+      return;
+    }
+    if (slides.length === 0) {
+      setError('No slides in the panel.');
+      return;
+    }
+    const cleared = clearSlideMarkersFromManuscript(manuscript || '');
+    // Re-resolve anchors against the post-clear manuscript so paragraph
+    // indices line up. (Clearing whole-marker paragraphs can shift
+    // indices.)
+    const postParagraphs = splitManuscriptParagraphs(cleared.newText);
+    const reAnchoredSlides = slides.map((s) => {
+      const r = resolveAnchor(s.anchor_paragraph_text, postParagraphs);
+      const newIdx =
+        r.status === 'exact' || r.status === 'modified' ? r.idx : null;
+      return { ...s, anchor_paragraph_idx: newIdx };
+    });
+    const insert = insertSlideMarkersIntoManuscript(
+      cleared.newText,
+      reAnchoredSlides
+    );
+    const stranded = reAnchoredSlides.filter(
+      (s) => s.anchor_paragraph_idx === null || s.anchor_paragraph_idx === undefined
+    ).length;
+    if (
+      !window.confirm(
+        `Force manuscript to match panel?\n\n` +
+          `• Remove ${cleared.removed} existing marker${cleared.removed === 1 ? '' : 's'} from the manuscript\n` +
+          `• Insert ${insert.inserted} marker${insert.inserted === 1 ? '' : 's'} for the panel slides\n` +
+          (stranded > 0
+            ? `\n${stranded} stranded slide${stranded === 1 ? ' has' : 's have'} no usable anchor and won't appear in the manuscript.\n`
+            : '')
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    onManuscriptChange(insert.newText);
   };
 
   // Live paragraph list — the anchor resolver works against this.
@@ -539,6 +678,50 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
             >
               ↪ Create from markers
             </button>
+            <span className="text-gray-300 px-1" aria-hidden="true">|</span>
+            <button
+              type="button"
+              onClick={handleClearMarkers}
+              disabled={
+                !onManuscriptChange || !manuscript || !manuscript.trim()
+              }
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                !onManuscriptChange
+                  ? 'Manuscript is locked. Unlock to clear markers.'
+                  : 'Strip every <SLIDE> marker from the manuscript text. The panel slide list is untouched.'
+              }
+            >
+              ✕ Clear markers
+            </button>
+            <button
+              type="button"
+              onClick={handleForceManuscriptToPanel}
+              disabled={!manuscript || !manuscript.trim()}
+              className="btn-secondary text-xs disabled:opacity-50 border-amber-300 text-amber-800 hover:bg-amber-50"
+              title="Manuscript wins: delete the entire panel slide list and rebuild it from <SLIDE> markers in the manuscript."
+            >
+              ⇒ Force manuscript→panel
+            </button>
+            <button
+              type="button"
+              onClick={handleForcePanelToManuscript}
+              disabled={
+                !onManuscriptChange ||
+                slides.length === 0 ||
+                !manuscript ||
+                !manuscript.trim()
+              }
+              className="btn-secondary text-xs disabled:opacity-50 border-amber-300 text-amber-800 hover:bg-amber-50"
+              title={
+                !onManuscriptChange
+                  ? 'Manuscript is locked. Unlock to write markers.'
+                  : 'Panel wins: clear every <SLIDE> marker from the manuscript, then insert fresh markers from the panel slide list.'
+              }
+            >
+              ⇐ Force panel→manuscript
+            </button>
+            <span className="text-gray-300 px-1" aria-hidden="true">|</span>
             <button
               type="button"
               onClick={() => setSuggestModalOpen(true)}

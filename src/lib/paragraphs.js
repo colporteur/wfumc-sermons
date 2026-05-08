@@ -167,6 +167,11 @@ export function findManuscriptSlideMarkers(text) {
 // Returns { newText, inserted, skipped } where inserted/skipped are
 // counts. The original text is left alone for paragraphs that already
 // contain a marker for that slide number.
+//
+// When multiple slides share the same anchor paragraph, all their
+// markers are emitted together at the top of that paragraph, sorted by
+// slide number ascending — so the manuscript always reads in slide
+// order even when several slides advance on the same paragraph.
 export function insertSlideMarkersIntoManuscript(text, slides) {
   const paragraphs = splitManuscriptParagraphs(text || '');
   // Map paragraph idx → working text so we can mutate without losing
@@ -176,38 +181,97 @@ export function insertSlideMarkersIntoManuscript(text, slides) {
   let inserted = 0;
   let skipped = 0;
 
+  // Step 1: group slides by their anchor paragraph idx. Each entry
+  // also carries the slide's 1-based panel position (= slide number).
+  const byAnchor = new Map(); // idx → [{ slideNumber, description }]
   for (let i = 0; i < slides.length; i++) {
     const slide = slides[i];
     const idx = slide.anchor_paragraph_idx;
+    const slideNumber = i + 1;
+
     if (idx === null || idx === undefined) {
       skipped++;
       continue;
     }
-    const para = byIdx.get(idx);
-    if (para === undefined) {
-      // The anchor paragraph no longer exists in the current manuscript
-      // (slide is stranded). Skip — the user should triage in the panel.
+    if (!byIdx.has(idx)) {
+      // Anchor paragraph no longer exists (slide is stranded).
       skipped++;
       continue;
     }
 
-    const slideNumber = i + 1;
     const description = (slide.title || '(untitled)').trim();
-    const markerText = `<SLIDE #${slideNumber} – ${description}>`;
+    if (!byAnchor.has(idx)) byAnchor.set(idx, []);
+    byAnchor.get(idx).push({ slideNumber, description });
+  }
 
-    // Skip if a marker for this slide number already exists in the paragraph.
-    const existsRe = new RegExp(`<SLIDE\\s+#?${slideNumber}\\s*[-–—]`, 'i');
-    if (existsRe.test(para)) {
-      skipped++;
-      continue;
+  // Step 2: for each anchor paragraph, sort its slides ascending by
+  // number, drop any whose marker is already present in the paragraph
+  // (by number OR by matching description for that paragraph), then
+  // prepend the combined marker block in one shot.
+  for (const [idx, entries] of byAnchor.entries()) {
+    const para = byIdx.get(idx);
+    entries.sort((a, b) => a.slideNumber - b.slideNumber);
+
+    // Collect existing slide NUMBERS in this paragraph so we don't
+    // double-insert the same slide. We deliberately do NOT dedupe by
+    // description — multiple slides can legitimately share a description
+    // (e.g., two "Acts 17:32-34" callbacks at the same anchor).
+    const existingNumbers = new Set();
+    SLIDE_MARKER_RE.lastIndex = 0;
+    let m;
+    while ((m = SLIDE_MARKER_RE.exec(para)) !== null) {
+      existingNumbers.add(parseInt(m[1], 10));
     }
 
-    byIdx.set(idx, markerText + '\n\n' + para);
-    inserted++;
+    const markersToInsert = [];
+    for (const e of entries) {
+      if (existingNumbers.has(e.slideNumber)) {
+        skipped++;
+        continue;
+      }
+      markersToInsert.push(`<SLIDE #${e.slideNumber} – ${e.description}>`);
+      existingNumbers.add(e.slideNumber);
+      inserted++;
+    }
+
+    if (markersToInsert.length > 0) {
+      byIdx.set(idx, markersToInsert.join('\n\n') + '\n\n' + para);
+    }
   }
 
   // Reassemble the manuscript with paragraph separators preserved.
   const newText = paragraphs.map((p) => byIdx.get(p.idx)).join('\n\n');
 
   return { newText, inserted, skipped };
+}
+
+// Strip every <SLIDE #N – Description> marker from the manuscript and
+// collapse the blank lines that result (so a paragraph that consisted
+// of nothing but markers doesn't leave a hole in the document).
+//
+// Returns { newText, removed } where `removed` is how many markers were
+// stripped. Used by:
+//   * "Clear markers from manuscript" — straight cleanup
+//   * "Force panel → manuscript" — clear, then re-insert from panel
+export function clearSlideMarkersFromManuscript(text) {
+  if (!text) return { newText: '', removed: 0 };
+  let removed = 0;
+  // Use a fresh regex (state-less) so we don't have to reset lastIndex
+  // — and so this function is safe to call from anywhere.
+  const re = /<SLIDE\s+#?\d+\s*[-–—]\s*[^>]+>/g;
+  const stripped = text.replace(re, () => {
+    removed++;
+    return '';
+  });
+  // Cleanup: trim trailing whitespace on each line (markers often left
+  // a leading space behind), then collapse 3+ blank lines into 2 so the
+  // paragraph structure stays intact.
+  const cleaned = stripped
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/g, ''))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^\n+/, '')
+    .replace(/\n+$/, '\n');
+  return { newText: cleaned, removed };
 }
