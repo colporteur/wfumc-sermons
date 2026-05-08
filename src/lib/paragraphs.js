@@ -245,9 +245,9 @@ export function insertSlideMarkersIntoManuscript(text, slides) {
   return { newText, inserted, skipped };
 }
 
-// Strip every <SLIDE #N – Description> marker from the manuscript and
-// collapse the blank lines that result (so a paragraph that consisted
-// of nothing but markers doesn't leave a hole in the document).
+// Strip every <SLIDE> marker (numbered OR unnumbered) from the
+// manuscript and collapse the blank lines that result (so a paragraph
+// that consisted of nothing but markers doesn't leave a hole).
 //
 // Returns { newText, removed } where `removed` is how many markers were
 // stripped. Used by:
@@ -256,9 +256,9 @@ export function insertSlideMarkersIntoManuscript(text, slides) {
 export function clearSlideMarkersFromManuscript(text) {
   if (!text) return { newText: '', removed: 0 };
   let removed = 0;
-  // Use a fresh regex (state-less) so we don't have to reset lastIndex
-  // — and so this function is safe to call from anywhere.
-  const re = /<SLIDE\s+#?\d+\s*[-–—]\s*[^>]+>/g;
+  // Permissive: optional number group so unnumbered shorthand like
+  // "<SLIDE – Idea>" is also caught.
+  const re = /<SLIDE(?:\s+#?\d+)?\s*[-–—]\s*[^>]+>/g;
   const stripped = text.replace(re, () => {
     removed++;
     return '';
@@ -274,4 +274,59 @@ export function clearSlideMarkersFromManuscript(text) {
     .replace(/^\n+/, '')
     .replace(/\n+$/, '\n');
   return { newText: cleaned, removed };
+}
+
+// Walk the manuscript in paragraph order, find every <SLIDE> marker
+// (numbered like "<SLIDE #5 – Title>" OR unnumbered shorthand like
+// "<SLIDE – Title>"), and renumber every match sequentially 1..N in
+// the order they appear in the manuscript. Returns the rewritten
+// manuscript plus a list of slide stubs ready to feed createSlide().
+//
+// Used by the "Force manuscript → panel" rebuild flow so the pastor
+// can scribble inline cues without bothering with numbers, and the
+// system can pin everything down with the correct sequential numbers
+// in one pass.
+//
+// Returns: { newText, slides, renumbered, total }
+//   slides[] = [{ number, description, paragraphIdx, paragraphText }]
+//   renumbered = how many markers got a different number than before
+//                (unnumbered counts as different from any number)
+//   total      = total markers found
+export function renumberSlideMarkersInManuscript(text) {
+  if (!text) return { newText: '', slides: [], renumbered: 0, total: 0 };
+  const paragraphs = splitManuscriptParagraphs(text);
+  const slideStubs = [];
+  let counter = 0;
+  let renumbered = 0;
+  // First pass: rewrite each paragraph's text with sequentially-numbered
+  // markers, collecting slide stubs as we go.
+  const newParagraphTexts = paragraphs.map((p) => {
+    // Fresh regex per paragraph so lastIndex doesn't leak across calls.
+    const re = /<SLIDE(?:\s+#?(\d+))?\s*[-–—]\s*([^>]+)>/g;
+    return p.text.replace(re, (_match, numStr, desc) => {
+      counter++;
+      const description = (desc || '').trim();
+      slideStubs.push({
+        number: counter,
+        description,
+        paragraphIdx: p.idx,
+      });
+      const oldNum = numStr ? parseInt(numStr, 10) : null;
+      if (oldNum !== counter) renumbered++;
+      return `<SLIDE #${counter} – ${description}>`;
+    });
+  });
+  // Second pass: stamp each stub with the POST-renumber paragraph
+  // text so future anchor resolution uses the canonical (renumbered)
+  // form. paragraphs[i].idx === i, so direct index lookup works.
+  const slides = slideStubs.map((s) => ({
+    ...s,
+    paragraphText: newParagraphTexts[s.paragraphIdx],
+  }));
+  return {
+    newText: newParagraphTexts.join('\n\n'),
+    slides,
+    renumbered,
+    total: counter,
+  };
 }

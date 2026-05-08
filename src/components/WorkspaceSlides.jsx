@@ -15,6 +15,7 @@ import {
   paragraphPreview,
   insertSlideMarkersIntoManuscript,
   clearSlideMarkersFromManuscript,
+  renumberSlideMarkersInManuscript,
   findManuscriptSlideMarkers,
 } from '../lib/paragraphs';
 import WorkspaceSlideSuggestionsModal from './WorkspaceSlideSuggestionsModal.jsx';
@@ -218,38 +219,63 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
     onManuscriptChange(newText);
   };
 
-  // "Manuscript wins": delete every panel slide and rebuild the list
-  // from the <SLIDE #N – Description> markers in the manuscript. Use
-  // this when you've been editing markers inline and want the panel to
-  // catch up rather than the other way around.
+  // "Manuscript wins": renumber every <SLIDE> marker in the manuscript
+  // sequentially in order of occurrence (catching unnumbered shorthand
+  // like "<SLIDE – Idea>" too), rewrite the manuscript with the proper
+  // numbers, then delete every panel slide and rebuild the list from
+  // the renumbered markers. Use this when you've been editing markers
+  // inline (with or without numbers) and want the panel + manuscript
+  // to both reflect "manuscript order is the source of truth."
   const handleForceManuscriptToPanel = async () => {
     if (!sermonId || !ownerUserId) return;
     if (!manuscript || !manuscript.trim()) {
       setError('Manuscript is empty.');
       return;
     }
-    const markers = findManuscriptSlideMarkers(manuscript);
-    if (markers.length === 0) {
+    const {
+      newText,
+      slides: markers,
+      renumbered,
+      total,
+    } = renumberSlideMarkersInManuscript(manuscript);
+    if (total === 0) {
       setError(
-        'No <SLIDE> markers found in the manuscript. Add markers like "<SLIDE #1 – Description>" first, or use "Insert markers".'
+        'No <SLIDE> markers found in the manuscript. Add markers like ' +
+          '"<SLIDE #1 – Description>" or shorthand "<SLIDE – Description>" first.'
       );
       return;
     }
-    markers.sort(
-      (a, b) => a.number - b.number || a.paragraphIdx - b.paragraphIdx
-    );
+    // Renumbering rewrites the manuscript text. If that's needed but
+    // the manuscript is locked, bail before doing anything destructive.
+    const needsRewrite = renumbered > 0 && newText !== manuscript;
+    if (needsRewrite && !onManuscriptChange) {
+      setError(
+        'The manuscript has unnumbered or out-of-order markers that need renumbering, ' +
+          'but the manuscript is locked. Unlock the manuscript and try again.'
+      );
+      return;
+    }
     if (
       !window.confirm(
         `Force panel to match manuscript?\n\n` +
           `• Delete all ${slides.length} existing slide${slides.length === 1 ? '' : 's'} in the panel\n` +
-          `• Recreate ${markers.length} slide${markers.length === 1 ? '' : 's'} from the markers in the manuscript\n\n` +
-          `New slides default to the "Content" type. Slide bodies, notes, and image uploads on the deleted slides will NOT be carried over — only the marker description becomes the new slide title.`
+          `• Recreate ${total} slide${total === 1 ? '' : 's'} from the markers in the manuscript\n` +
+          (renumbered > 0
+            ? `• Renumber ${renumbered} marker${renumbered === 1 ? '' : 's'} in the manuscript ` +
+              `(unnumbered or out-of-order markers become sequential)\n`
+            : '') +
+          `\nNew slides default to the "Content" type. Slide bodies, notes, and image uploads on the deleted slides will NOT be carried over — only the marker description becomes the new slide title.`
       )
     ) {
       return;
     }
     setError(null);
     try {
+      // Push the renumbered manuscript text first so the markers the
+      // pastor sees match the panel we're about to build.
+      if (needsRewrite) {
+        onManuscriptChange(newText);
+      }
       await deleteAllSlidesForSermon(sermonId);
       const created = [];
       for (let i = 0; i < markers.length; i++) {
@@ -699,7 +725,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
               onClick={handleForceManuscriptToPanel}
               disabled={!manuscript || !manuscript.trim()}
               className="btn-secondary text-xs disabled:opacity-50 border-amber-300 text-amber-800 hover:bg-amber-50"
-              title="Manuscript wins: delete the entire panel slide list and rebuild it from <SLIDE> markers in the manuscript."
+              title="Manuscript wins: rebuild the panel from <SLIDE> markers in the manuscript. Unnumbered shorthand like '<SLIDE – Idea>' is also picked up — every marker is renumbered sequentially in manuscript order."
             >
               ⇒ Force manuscript→panel
             </button>
