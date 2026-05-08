@@ -1578,7 +1578,7 @@ export async function lookupScriptureNRSVUe(reference) {
   if (!ref) throw new Error('No scripture reference provided.');
   const result = await callClaude({
     system:
-      'You are helping prepare a church slide. When asked for a scripture passage, return ONLY the verses (no introduction, no commentary, no copyright notice). Format each verse with its number in brackets at the start, like "[1] In the beginning..." Use plain text only — no markdown.',
+      'You are helping prepare a church slide. When asked for a scripture passage, return ONLY the verse text — no verse numbers, no brackets, no introduction, no commentary, no copyright notice. Run the verses together as continuous prose. After all the verses, output a blank line, then the full scripture reference on its own line (e.g. "Acts 17:23"). Use plain text only — no markdown.',
     messages: [
       {
         role: 'user',

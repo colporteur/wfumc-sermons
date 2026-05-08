@@ -213,7 +213,7 @@ export default function ManuscriptEditor({
           ref={gutterRef}
           aria-hidden="true"
           className="select-none flex-shrink-0 text-right pr-2 border-r border-gray-200 bg-gray-50 overflow-hidden relative"
-          style={{ width: '3rem' }}
+          style={{ width: '3.75rem' }}
         >
           {/* Inner div is shifted by scrollTop so the numbers move with the textarea text. */}
           <div
@@ -235,7 +235,7 @@ export default function ManuscriptEditor({
                     position: 'absolute',
                     top: textTopOffset + p.top,
                     right: '0.5rem',
-                    fontSize: '10px',
+                    fontSize: '13px',
                     lineHeight: 1.2,
                     fontFamily:
                       'ui-monospace, SFMono-Regular, Menlo, monospace',
