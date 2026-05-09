@@ -49,6 +49,13 @@ export default function SendToBulletinModal({ section, onClose }) {
   const [committing, setCommitting] = useState(false);
   const [done, setDone] = useState(null); // { bulletinId, itemId, message }
 
+  // Mode: 'append' (default — insert at the end of the chosen
+  // bulletin) or 'replace' (overwrite an existing liturgy item in place).
+  const [mode, setMode] = useState('append');
+  const [existingItems, setExistingItems] = useState([]);
+  const [replaceItemId, setReplaceItemId] = useState('');
+  const [loadingItems, setLoadingItems] = useState(false);
+
   useEffect(() => {
     if (!section) return;
     setTitle(section.title || titleFromKind(section.section_kind) || '');
@@ -88,6 +95,48 @@ export default function SendToBulletinModal({ section, onClose }) {
     })();
   }, [section]);
 
+  // Whenever the chosen bulletin changes, fetch its existing liturgy
+  // items so the Replace-mode dropdown is ready to use the moment the
+  // pastor flips the toggle. Best-effort — failure leaves the dropdown
+  // empty and falls back to "Append".
+  useEffect(() => {
+    if (!bulletinId) {
+      setExistingItems([]);
+      setReplaceItemId('');
+      return;
+    }
+    let cancelled = false;
+    setLoadingItems(true);
+    (async () => {
+      try {
+        const { data, error: itemsErr } = await withTimeout(
+          supabase
+            .from('liturgy_items')
+            .select('id, position, item_type, title, inline_body')
+            .eq('bulletin_id', bulletinId)
+            .order('position', { ascending: true })
+        );
+        if (itemsErr) throw itemsErr;
+        if (cancelled) return;
+        setExistingItems(data ?? []);
+        // Reset the picked item whenever the bulletin changes so we
+        // never carry an id from one bulletin into another.
+        setReplaceItemId('');
+      } catch (e) {
+        if (!cancelled) setExistingItems([]);
+        // Don't surface the error in the main banner — Replace mode
+        // can simply be unavailable; Append still works.
+        // eslint-disable-next-line no-console
+        console.warn('SendToBulletinModal: failed to load existing items', e);
+      } finally {
+        if (!cancelled) setLoadingItems(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bulletinId]);
+
   const handleCommit = async () => {
     if (!bulletinId) {
       setError('Pick a bulletin first.');
@@ -97,48 +146,99 @@ export default function SendToBulletinModal({ section, onClose }) {
       setError('Body is empty — nothing to send.');
       return;
     }
+    if (mode === 'replace' && !replaceItemId) {
+      setError(
+        'Pick which existing liturgy item to overwrite, or switch to Append mode.'
+      );
+      return;
+    }
+    if (mode === 'replace') {
+      const target = existingItems.find((i) => i.id === replaceItemId);
+      const targetLabel = target
+        ? `#${target.position} · ${
+            target.title || itemTypeLabel(target.item_type) || '(untitled)'
+          }`
+        : 'this item';
+      if (
+        !window.confirm(
+          `Overwrite ${targetLabel} with the new content?\n\n` +
+            `The existing title, body, and item type will be replaced. ` +
+            `Position in the order of worship stays the same.`
+        )
+      ) {
+        return;
+      }
+    }
     setCommitting(true);
     setError(null);
     try {
-      // Compute next position in the chosen bulletin.
-      const { data: existing, error: posErr } = await withTimeout(
-        supabase
-          .from('liturgy_items')
-          .select('position')
-          .eq('bulletin_id', bulletinId)
-          .order('position', { ascending: false })
-          .limit(1)
-      );
-      if (posErr) throw posErr;
-      const nextPos =
-        existing && existing.length > 0 ? (existing[0].position ?? 0) + 1 : 1;
+      if (mode === 'replace') {
+        // UPDATE the chosen item in place. Position stays as-is so the
+        // pastor's existing order of worship layout is preserved.
+        const { data: updated, error: updErr } = await withTimeout(
+          supabase
+            .from('liturgy_items')
+            .update({
+              item_type: itemType,
+              title: title.trim() || titleFromKind(section.section_kind),
+              inline_body: body,
+            })
+            .eq('id', replaceItemId)
+            .select('id')
+            .single()
+        );
+        if (updErr) throw updErr;
+        setDone({
+          bulletinId,
+          itemId: updated.id,
+          message: 'Existing item overwritten.',
+        });
+      } else {
+        // APPEND: compute next position in the chosen bulletin and insert.
+        const { data: existing, error: posErr } = await withTimeout(
+          supabase
+            .from('liturgy_items')
+            .select('position')
+            .eq('bulletin_id', bulletinId)
+            .order('position', { ascending: false })
+            .limit(1)
+        );
+        if (posErr) throw posErr;
+        const nextPos =
+          existing && existing.length > 0
+            ? (existing[0].position ?? 0) + 1
+            : 1;
 
-      const { data: newItem, error: insErr } = await withTimeout(
-        supabase
-          .from('liturgy_items')
-          .insert({
-            bulletin_id: bulletinId,
-            position: nextPos,
-            item_type: itemType,
-            title: title.trim() || titleFromKind(section.section_kind),
-            inline_body: body,
-            is_starred: false,
-          })
-          .select('id')
-          .single()
-      );
-      if (insErr) throw insErr;
-      setDone({
-        bulletinId,
-        itemId: newItem.id,
-        message: 'Sent to bulletin.',
-      });
+        const { data: newItem, error: insErr } = await withTimeout(
+          supabase
+            .from('liturgy_items')
+            .insert({
+              bulletin_id: bulletinId,
+              position: nextPos,
+              item_type: itemType,
+              title: title.trim() || titleFromKind(section.section_kind),
+              inline_body: body,
+              is_starred: false,
+            })
+            .select('id')
+            .single()
+        );
+        if (insErr) throw insErr;
+        setDone({
+          bulletinId,
+          itemId: newItem.id,
+          message: 'Sent to bulletin.',
+        });
+      }
     } catch (e) {
       setError(e.message || String(e));
     } finally {
       setCommitting(false);
     }
   };
+
+  const itemTypeLabel = (t) =>
+    ITEM_TYPE_OPTIONS.find((o) => o.value === t)?.label || t;
 
   if (!section) return null;
 
@@ -212,6 +312,86 @@ export default function SendToBulletinModal({ section, onClose }) {
                 </select>
               </div>
 
+              <div>
+                <span className="label">Where to put it</span>
+                <div className="flex flex-wrap items-center gap-4 mt-1">
+                  <label className="inline-flex items-baseline gap-1.5 text-sm cursor-pointer">
+                    <input
+                      type="radio"
+                      name="send-mode"
+                      value="append"
+                      checked={mode === 'append'}
+                      onChange={() => setMode('append')}
+                    />
+                    <span>Append to end of order of worship</span>
+                  </label>
+                  <label
+                    className={
+                      'inline-flex items-baseline gap-1.5 text-sm cursor-pointer ' +
+                      (existingItems.length === 0 ? 'opacity-50' : '')
+                    }
+                    title={
+                      existingItems.length === 0
+                        ? 'This bulletin has no existing liturgy items to overwrite.'
+                        : 'Pick an existing item to overwrite in place.'
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="send-mode"
+                      value="replace"
+                      checked={mode === 'replace'}
+                      onChange={() => setMode('replace')}
+                      disabled={existingItems.length === 0}
+                    />
+                    <span>Replace an existing item</span>
+                  </label>
+                </div>
+              </div>
+
+              {mode === 'replace' && (
+                <div>
+                  <label className="label">Item to overwrite</label>
+                  {loadingItems ? (
+                    <p className="text-xs text-gray-500 italic">
+                      Loading existing items…
+                    </p>
+                  ) : (
+                    <select
+                      value={replaceItemId}
+                      onChange={(e) => setReplaceItemId(e.target.value)}
+                      className="input"
+                    >
+                      <option value="">— Pick an existing item —</option>
+                      {existingItems.map((it) => {
+                        const label =
+                          it.title ||
+                          itemTypeLabel(it.item_type) ||
+                          '(untitled)';
+                        const preview = it.inline_body
+                          ? ' — ' +
+                            it.inline_body
+                              .replace(/\s+/g, ' ')
+                              .trim()
+                              .slice(0, 50) +
+                            (it.inline_body.length > 50 ? '…' : '')
+                          : '';
+                        return (
+                          <option key={it.id} value={it.id}>
+                            #{it.position} · {label} ({it.item_type}){preview}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    The chosen item's title, body, and type will be
+                    overwritten. Its position in the order of worship is
+                    preserved.
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div className="md:col-span-2">
                   <label className="label">Item title</label>
@@ -246,9 +426,9 @@ export default function SendToBulletinModal({ section, onClose }) {
                   onChange={(e) => setBody(e.target.value)}
                 />
                 <p className="text-[11px] text-gray-500 mt-1">
-                  Will be appended to the end of the chosen bulletin's order
-                  of worship. You can reorder and refine in the bulletin
-                  editor afterward.
+                  {mode === 'replace'
+                    ? "Will overwrite the chosen item's body in place. You can refine in the bulletin editor afterward."
+                    : "Will be appended to the end of the chosen bulletin's order of worship. You can reorder and refine in the bulletin editor afterward."}
                 </p>
               </div>
 
@@ -264,10 +444,20 @@ export default function SendToBulletinModal({ section, onClose }) {
                 <button
                   type="button"
                   onClick={handleCommit}
-                  disabled={committing || !bulletinId}
+                  disabled={
+                    committing ||
+                    !bulletinId ||
+                    (mode === 'replace' && !replaceItemId)
+                  }
                   className="btn-primary text-sm disabled:opacity-50"
                 >
-                  {committing ? 'Sending…' : 'Send to bulletin'}
+                  {committing
+                    ? mode === 'replace'
+                      ? 'Overwriting…'
+                      : 'Sending…'
+                    : mode === 'replace'
+                    ? 'Overwrite existing item'
+                    : 'Send to bulletin'}
                 </button>
               </div>
             </>
