@@ -63,8 +63,11 @@
   Requires Microsoft PowerPoint to be installed locally (this script
   uses COM automation, not a headless converter).
 
-  Built for Pastor Todd's WFUMC Sermon Archive — Phase B of the
+  Built for Pastor Todd's WFUMC Sermon Archive - Phase B of the
   manuscript+slides batch importer pipeline.
+
+  IMPORTANT: keep this script ASCII-only (no fancy unicode) so Windows
+  PowerShell 5.1 parses it correctly even without a UTF-8 BOM.
 #>
 
 [CmdletBinding()]
@@ -83,14 +86,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ScriptVersion = '1.0.0'
+$ScriptVersion = '1.0.1'
 
 # ----------------------------------------------------------------------
 # Setup + sanity checks
 # ----------------------------------------------------------------------
 
 if (-not (Test-Path -LiteralPath $SourceFolder -PathType Container)) {
-  Write-Host "✗ Source folder not found: $SourceFolder" -ForegroundColor Red
+  Write-Host "[ERROR] Source folder not found: $SourceFolder" -ForegroundColor Red
   exit 1
 }
 $SourceFolder = (Resolve-Path -LiteralPath $SourceFolder).Path
@@ -107,11 +110,11 @@ if (Test-Path -LiteralPath $OutputFolder) {
 }
 
 Write-Host ""
-Write-Host "PowerPoint → JPEG batch exporter" -ForegroundColor Cyan
-Write-Host "─────────────────────────────────" -ForegroundColor Cyan
+Write-Host "PowerPoint -> JPEG batch exporter" -ForegroundColor Cyan
+Write-Host "---------------------------------" -ForegroundColor Cyan
 Write-Host "  Source : $SourceFolder"
 Write-Host "  Output : $OutputFolder"
-Write-Host "  Size   : ${Width}×${Height}"
+Write-Host "  Size   : ${Width}x${Height}"
 if ($Force)  { Write-Host "  Force  : YES (will re-export everything)" -ForegroundColor Yellow }
 if ($DryRun) { Write-Host "  Mode   : DRY-RUN (no exports will run)" -ForegroundColor Yellow }
 Write-Host ""
@@ -183,7 +186,7 @@ function Test-SourceUnchanged {
 }
 
 # ----------------------------------------------------------------------
-# Plan first — print what we're about to do
+# Plan first - print what we are about to do
 # ----------------------------------------------------------------------
 
 $plan = @()
@@ -210,9 +213,9 @@ Write-Host ""
 if ($DryRun) {
   Write-Host "Dry-run breakdown:" -ForegroundColor Yellow
   foreach ($p in $plan) {
-    $icon = if ($p.Skip) { '·' } else { '→' }
-    $color = if ($p.Skip) { 'DarkGray' } else { 'White' }
-    Write-Host ("  {0} {1}  →  {2}" -f $icon, $p.Source.Name, (Split-Path -Leaf $p.OutFolder)) -ForegroundColor $color
+    $marker = if ($p.Skip) { '[skip]' } else { '[do  ]' }
+    $color  = if ($p.Skip) { 'DarkGray' } else { 'White' }
+    Write-Host ("  {0} {1}  ->  {2}" -f $marker, $p.Source.Name, (Split-Path -Leaf $p.OutFolder)) -ForegroundColor $color
   }
   Write-Host ""
   Write-Host "Dry-run complete. Re-run without -DryRun to perform the exports." -ForegroundColor Yellow
@@ -220,7 +223,7 @@ if ($DryRun) {
 }
 
 if ($toExport.Count -eq 0) {
-  Write-Host "Nothing to do — every presentation is already up-to-date." -ForegroundColor Green
+  Write-Host "Nothing to do - every presentation is already up-to-date." -ForegroundColor Green
   exit 0
 }
 
@@ -232,13 +235,13 @@ Write-Host "Launching PowerPoint..." -ForegroundColor Cyan
 try {
   $ppt = New-Object -ComObject PowerPoint.Application
 } catch {
-  Write-Host "✗ Could not launch PowerPoint via COM. Is Microsoft PowerPoint installed?" -ForegroundColor Red
+  Write-Host "[ERROR] Could not launch PowerPoint via COM. Is Microsoft PowerPoint installed?" -ForegroundColor Red
   Write-Host "  $_" -ForegroundColor Red
   exit 1
 }
 
 # Some PowerPoint installs require Visible during automation; mark as
-# minimized so it doesn't grab focus repeatedly. (PpWindowState: 2 = min)
+# minimized so it does not grab focus repeatedly. (PpWindowState: 2 = min)
 try { $ppt.WindowState = 2 } catch { }
 
 $results = @{ exported = 0; skipped = $toSkip.Count; failed = 0; errors = @() }
@@ -292,10 +295,10 @@ foreach ($p in $toExport) {
     $metaPath = Join-Path $p.OutFolder 'metadata.json'
     $meta | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $metaPath -Encoding UTF8
 
-    Write-Host ("  ✓ exported {0} slides → {1}" -f $slideCount, (Split-Path -Leaf $p.OutFolder)) -ForegroundColor Green
+    Write-Host ("  [OK] exported {0} slides -> {1}" -f $slideCount, (Split-Path -Leaf $p.OutFolder)) -ForegroundColor Green
     $results.exported++
   } catch {
-    Write-Host ("  ✗ failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    Write-Host ("  [FAIL] {0}" -f $_.Exception.Message) -ForegroundColor Red
     $results.failed++
     $results.errors += [pscustomobject]@{
       source = $p.Source.FullName
@@ -339,18 +342,18 @@ $runLog | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $runLogPath -Encodi
 # ----------------------------------------------------------------------
 
 Write-Host ""
-Write-Host "─────────────────────────────────" -ForegroundColor Cyan
+Write-Host "---------------------------------" -ForegroundColor Cyan
 Write-Host "Summary" -ForegroundColor Cyan
-Write-Host "─────────────────────────────────" -ForegroundColor Cyan
-Write-Host ("  ✓ Exported : {0}" -f $results.exported) -ForegroundColor Green
-Write-Host ("  · Skipped  : {0}" -f $results.skipped) -ForegroundColor DarkGray
+Write-Host "---------------------------------" -ForegroundColor Cyan
+Write-Host ("  Exported : {0}" -f $results.exported) -ForegroundColor Green
+Write-Host ("  Skipped  : {0}" -f $results.skipped) -ForegroundColor DarkGray
 if ($results.failed -gt 0) {
-  Write-Host ("  ✗ Failed   : {0}" -f $results.failed) -ForegroundColor Red
+  Write-Host ("  Failed   : {0}" -f $results.failed) -ForegroundColor Red
   Write-Host ""
   Write-Host "  Failures (also recorded in $runLogPath):" -ForegroundColor Red
   foreach ($e in $results.errors) {
-    Write-Host ("    • {0}" -f $e.source) -ForegroundColor Red
-    Write-Host ("        {0}"   -f $e.error)  -ForegroundColor DarkGray
+    Write-Host ("    - {0}" -f $e.source) -ForegroundColor Red
+    Write-Host ("        {0}"  -f $e.error)  -ForegroundColor DarkGray
   }
 }
 Write-Host ""
