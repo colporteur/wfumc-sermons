@@ -321,7 +321,7 @@ export default function SermonList() {
             Every sermon you've preached, indexed and searchable.
           </p>
         </div>
-        <div className="flex items-center gap-2 whitespace-nowrap">
+        <div className="flex items-center gap-2 whitespace-nowrap flex-wrap">
           <Link
             to="/sermons/new/workspace"
             className="btn-primary"
@@ -335,6 +335,13 @@ export default function SermonList() {
             title="Use the full New Sermon form (theme, lectionary year, eulogy flag, manuscript upload, etc.)."
           >
             + New sermon
+          </Link>
+          <Link
+            to="/sermons/import-manuscripts"
+            className="btn-secondary"
+            title="Batch-import a folder of manuscript files (.docx / .enex / .txt) and match them to existing sermon detail pages."
+          >
+            📥 Import manuscripts
           </Link>
         </div>
       </div>

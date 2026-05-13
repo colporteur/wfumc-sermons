@@ -23,6 +23,8 @@ import Settings from './pages/Settings.jsx';
 import SermonWorkspace from './pages/SermonWorkspace.jsx';
 import SermonNewWorkspace from './pages/SermonNewWorkspace.jsx';
 import SermonSlideDeck from './pages/SermonSlideDeck.jsx';
+import ImportManuscripts from './pages/ImportManuscripts.jsx';
+import ImportManuscriptsReviewPreachings from './pages/ImportManuscriptsReviewPreachings.jsx';
 
 export default function App() {
   return (
@@ -41,6 +43,11 @@ export default function App() {
         <Route path="/sermons/:id" element={<SermonDetail />} />
         <Route path="/sermons/:id/workspace" element={<SermonWorkspace />} />
         <Route path="/sermons/:id/slide-deck" element={<SermonSlideDeck />} />
+        <Route path="/sermons/import-manuscripts" element={<ImportManuscripts />} />
+        <Route
+          path="/sermons/import-manuscripts/review-preachings"
+          element={<ImportManuscriptsReviewPreachings />}
+        />
         <Route path="/resources" element={<ResourceList />} />
         <Route path="/resources/new" element={<ResourceNew />} />
         <Route path="/resources/extract" element={<ResourceExtract />} />

@@ -1591,3 +1591,76 @@ export async function lookupScriptureNRSVUe(reference) {
   if (!text) throw new Error('Claude returned no text.');
   return text;
 }
+
+/**
+ * Manuscript → sermon matcher used as the fall-through layer of the
+ * batch importer. Given a manuscript's filename + first ~3000 chars of
+ * text, plus a JSON list of unmatched sermons, ask Claude which
+ * sermon (if any) this manuscript most likely belongs to.
+ *
+ * Returns: { sermonId: string|null, confidence: 'high'|'medium'|'low'|'none', reasoning: string }
+ *
+ * @param {Object} input
+ * @param {string} input.filename
+ * @param {string} input.snippet — first ~3000 chars of the manuscript
+ * @param {Array<{id, title, scripture_reference, preached_at}>} input.candidates — usually all
+ *   sermons that didn't already get a high-confidence heuristic match (top ~50)
+ */
+export async function matchManuscriptToSermon({ filename, snippet, candidates }) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return { sermonId: null, confidence: 'none', reasoning: 'No candidates to match against.' };
+  }
+  const trimmed = (snippet || '').slice(0, 3000);
+  const result = await callClaude({
+    system:
+      'You are helping a pastor match an imported sermon manuscript to its corresponding ' +
+      'sermon record in a database. You will receive: (1) the original filename, (2) the first ' +
+      '~3000 characters of the manuscript text, and (3) a JSON array of candidate sermons ' +
+      '(each with id, title, scripture_reference, preached_at). ' +
+      '\n\nPick the SINGLE best match if one exists. Use ALL signals: title overlap with the ' +
+      "candidate's title, scripture reference matching, preached date proximity to the " +
+      "manuscript's content (look for dates mentioned in the text), thematic match against the " +
+      'manuscript content. ' +
+      '\n\nRETURN STRICT JSON, no other text, in this exact shape:\n' +
+      '{"sermonId": "<uuid or null>", "confidence": "high"|"medium"|"low"|"none", "reasoning": "<one sentence>"}\n\n' +
+      'Set sermonId to null and confidence to "none" if no candidate is a plausible match. ' +
+      'Use "high" only when title AND scripture both align. "medium" when one strong signal ' +
+      'plus context. "low" when only weak signals. "none" otherwise.',
+    messages: [
+      {
+        role: 'user',
+        content:
+          `Filename: ${filename}\n\n` +
+          `Manuscript text (first 3000 chars):\n${trimmed}\n\n` +
+          `Candidate sermons:\n${JSON.stringify(candidates.map((c) => ({
+            id: c.id,
+            title: c.title || null,
+            scripture_reference: c.scripture_reference || null,
+            preached_at: c.preached_at || null,
+          })), null, 2)}`,
+      },
+    ],
+    max_tokens: 500,
+  });
+  const text = result?.content?.[0]?.text?.trim() || '';
+  // Strip code-fence wrappers if Claude added them.
+  let cleaned = text;
+  const fence = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(cleaned);
+  if (fence) cleaned = fence[1].trim();
+  try {
+    const parsed = JSON.parse(cleaned);
+    return {
+      sermonId: typeof parsed.sermonId === 'string' ? parsed.sermonId : null,
+      confidence: ['high', 'medium', 'low', 'none'].includes(parsed.confidence)
+        ? parsed.confidence
+        : 'none',
+      reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '',
+    };
+  } catch {
+    return {
+      sermonId: null,
+      confidence: 'none',
+      reasoning: `Claude returned unparseable response: ${text.slice(0, 100)}`,
+    };
+  }
+}

@@ -650,6 +650,7 @@ export default function SermonDetail() {
       {/* Past versions (revision snapshots) */}
       <RevisionsCard
         sermon={sermon}
+        setSermon={setSermon}
         revisions={revisions}
         setRevisions={setRevisions}
         userId={user?.id}
@@ -1500,13 +1501,86 @@ function SermonResourcesCard({
 // Use case: he frequently rewrites sermons when preaching them at a new
 // location, and occasionally wants to keep a copy of the prior version
 // in case a story or section is worth reviving later.
-function RevisionsCard({ sermon, revisions, setRevisions, userId }) {
+function RevisionsCard({ sermon, setSermon, revisions, setRevisions, userId }) {
   const [open, setOpen] = useState(false);
   const [snapshotting, setSnapshotting] = useState(false);
   const [label, setLabel] = useState('');
   const [error, setError] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
   const [deletingId, setDeletingId] = useState(null);
+  const [promotingId, setPromotingId] = useState(null);
+
+  // Promote an older revision to the canonical sermon.manuscript_text.
+  // The current canonical text first gets archived as a fresh revision
+  // so nothing is lost; then we update sermon.manuscript_text and
+  // delete the (now-promoted) revision row to avoid duplication.
+  const makeCanonical = async (rev) => {
+    if (!userId || !sermon) return;
+    if (
+      !window.confirm(
+        `Make this revision the canonical manuscript?\n\n` +
+          `The current canonical text will be archived as a new revision ` +
+          `("Previous canonical, archived <today>") so nothing is lost.`
+      )
+    ) {
+      return;
+    }
+    setPromotingId(rev.id);
+    setError(null);
+    try {
+      // 1. Archive the current canonical (only if it has text — empty
+      //    canonicals don't need archiving).
+      const currentText = (sermon.manuscript_text || '').trim();
+      let archivedRow = null;
+      if (currentText) {
+        const today = new Date().toISOString().slice(0, 10);
+        const { data: arch, error: archErr } = await withTimeout(
+          supabase
+            .from('sermon_revisions')
+            .insert({
+              sermon_id: sermon.id,
+              owner_user_id: userId,
+              snapshot_title: sermon.title ?? null,
+              snapshot_manuscript_text: sermon.manuscript_text ?? null,
+              snapshot_scripture_reference: sermon.scripture_reference ?? null,
+              snapshot_theme: sermon.theme ?? null,
+              snapshot_notes: sermon.notes ?? null,
+              label: `Previous canonical, archived ${today}`,
+            })
+            .select()
+            .single()
+        );
+        if (archErr) throw archErr;
+        archivedRow = arch;
+      }
+      // 2. Promote the chosen revision into sermon.manuscript_text.
+      const { data: updatedSermon, error: updErr } = await withTimeout(
+        supabase
+          .from('sermons')
+          .update({ manuscript_text: rev.snapshot_manuscript_text || '' })
+          .eq('id', sermon.id)
+          .select('*')
+          .single()
+      );
+      if (updErr) throw updErr;
+      // 3. Delete the just-promoted revision so it's not duplicated
+      //    (it now lives as sermon.manuscript_text).
+      const { error: delErr } = await withTimeout(
+        supabase.from('sermon_revisions').delete().eq('id', rev.id)
+      );
+      if (delErr) throw delErr;
+      // 4. Reflect new state in the parent.
+      if (typeof setSermon === 'function') setSermon(updatedSermon);
+      setRevisions((rs) => {
+        const minusPromoted = rs.filter((r) => r.id !== rev.id);
+        return archivedRow ? [archivedRow, ...minusPromoted] : minusPromoted;
+      });
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setPromotingId(null);
+    }
+  };
 
   const toggleExpanded = (id) => {
     setExpanded((prev) => {
@@ -1702,6 +1776,18 @@ function RevisionsCard({ sermon, revisions, setRevisions, userId }) {
                       className="text-xs text-umc-700 hover:text-umc-900 underline"
                     >
                       {isOpen ? 'Hide' : 'View'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => makeCanonical(rev)}
+                      disabled={
+                        promotingId === rev.id ||
+                        !rev.snapshot_manuscript_text?.trim()
+                      }
+                      className="text-xs text-umc-700 hover:text-umc-900 underline disabled:opacity-30"
+                      title="Make this revision the canonical manuscript on the sermon detail page (current canonical gets archived as a new revision)."
+                    >
+                      {promotingId === rev.id ? 'Promoting…' : '⭐ Make canonical'}
                     </button>
                     <button
                       type="button"
