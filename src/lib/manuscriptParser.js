@@ -9,7 +9,9 @@
 // hash, source filename, file modified date, and any usable footer
 // date extracted from the content.
 
-import mammoth from 'mammoth';
+// Note: mammoth is dynamically imported inside the .docx branch so it
+// shares the same lazy chunk as SermonDetail/SermonNew (otherwise vite
+// can't move it into a split chunk and the main bundle balloons).
 import { parseEnex } from './enex';
 
 // SHA-256 hash of normalized text. Whitespace is collapsed before
@@ -88,6 +90,7 @@ export async function parseManuscriptFile(file) {
   try {
     if (lower.endsWith('.docx')) {
       const arrayBuffer = await readAsArrayBuffer(file);
+      const mammoth = (await import('mammoth')).default;
       const result = await mammoth.extractRawText({ arrayBuffer });
       const text = (result.value || '').trim();
       return [

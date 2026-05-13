@@ -52,6 +52,10 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,ico,woff2}'],
+        // Bumped to 5 MiB so heavy-but-essential bundles (mammoth +
+        // pdfjs + xlsx + docx + pptxgenjs together) can still be
+        // precached for offline use. Default is 2 MiB.
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
       },
     }),
   ],
