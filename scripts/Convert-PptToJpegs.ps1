@@ -123,9 +123,15 @@ Write-Host ""
 # Find every .pptx / .ppt under the source folder
 # ----------------------------------------------------------------------
 
+# NOTE: `Get-ChildItem -Include` is broken when used with `-LiteralPath`
+# pointed at a directory (it returns everything instead of filtering).
+# So we get every file and filter by extension ourselves.
 $presentations = Get-ChildItem -LiteralPath $SourceFolder -Recurse -File `
-                   -Include *.pptx, *.ppt -ErrorAction SilentlyContinue |
-                 Where-Object { $_.Name -notmatch '^~\$' }   # skip Office lock files
+                   -ErrorAction SilentlyContinue |
+                 Where-Object {
+                   $_.Extension -match '^\.pptx?$' -and
+                   $_.Name -notmatch '^~\$'   # skip Office lock files
+                 }
 
 if (-not $presentations -or $presentations.Count -eq 0) {
   Write-Host "No .pptx or .ppt files found under $SourceFolder" -ForegroundColor Yellow
