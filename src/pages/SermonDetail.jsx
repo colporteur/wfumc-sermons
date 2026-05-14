@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
 import {
   extractResourcesFromManuscript,
@@ -675,6 +675,8 @@ export default function SermonDetail() {
       />
 
       <StashedBlocksCard sermonId={sermon.id} isLocked={sermon.manuscript_locked === true} />
+
+      <DeleteSermonCard sermon={sermon} />
 
       {showMerge && (
         <MergeSermonsModal
@@ -2139,6 +2141,285 @@ function ManuscriptCard({ sermon, setSermon, slideImages = [] }) {
           No manuscript text saved for this sermon. Click "+ Add manuscript"
           above to upload a Word doc or paste the text.
         </p>
+      )}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------
+// DeleteSermonCard — Danger zone at the bottom of the sermon detail page.
+// Shows a confirmation modal that lists what will be deleted (cascade)
+// vs. what will be unlinked (FK cleared but content preserved). Requires
+// the user to type the sermon's title to enable the destructive button.
+// ----------------------------------------------------------------------
+function DeleteSermonCard({ sermon }) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const [confirmText, setConfirmText] = useState('');
+  const [counts, setCounts] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Fetch all the row counts that the modal will display so the user
+  // sees exactly what's about to disappear (and what's just unlinking).
+  useEffect(() => {
+    if (!open || !sermon?.id) return;
+    let cancelled = false;
+    setCounts(null);
+    setError(null);
+    (async () => {
+      try {
+        const headCount = (table, col = 'sermon_id') =>
+          supabase
+            .from(table)
+            .select('id', { count: 'exact', head: true })
+            .eq(col, sermon.id);
+        const [
+          revs, preaches, resources, slides, slideImgs,
+          stashed, liturgyLinks, bulletinLinks, socialPosts, worshipPlans,
+        ] = await Promise.all([
+          headCount('sermon_revisions'),
+          headCount('preachings'),
+          headCount('sermon_resources'),
+          headCount('workspace_slides'),
+          headCount('sermon_slide_images'),
+          headCount('sermon_stashed_blocks'),
+          headCount('sermon_liturgy_links'),
+          headCount('liturgy_items'),
+          headCount('social_posts', 'source_sermon_id'),
+          headCount('worship_plans', 'upcoming_sermon_id'),
+        ]);
+        if (cancelled) return;
+        setCounts({
+          revisions: revs.count || 0,
+          preachings: preaches.count || 0,
+          resources: resources.count || 0,
+          slides: slides.count || 0,
+          slideImages: slideImgs.count || 0,
+          stashed: stashed.count || 0,
+          liturgyLinks: liturgyLinks.count || 0,
+          bulletinLinks: bulletinLinks.count || 0,
+          socialPosts: socialPosts.count || 0,
+          worshipPlans: worshipPlans.count || 0,
+        });
+      } catch (e) {
+        if (!cancelled) setError(e.message || String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sermon?.id]);
+
+  const expectedConfirm = (sermon?.title || '').trim();
+  const canDelete = confirmText.trim() === expectedConfirm && !busy && !!counts;
+
+  const handleDelete = async () => {
+    if (!canDelete) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: err } = await withTimeout(
+        supabase.from('sermons').delete().eq('id', sermon.id)
+      );
+      if (err) throw err;
+      // All cascades fire server-side. Bounce to the sermon list — the
+      // detail page would 404 if we stayed here.
+      navigate('/');
+    } catch (e) {
+      setError(e.message || String(e));
+      setBusy(false);
+    }
+  };
+
+  const closeModal = () => {
+    if (busy) return;
+    setOpen(false);
+    setConfirmText('');
+    setError(null);
+  };
+
+  return (
+    <div className="card border-red-200 bg-red-50/30">
+      <h2 className="font-serif text-lg text-red-900">Danger zone</h2>
+      <div className="flex items-start justify-between gap-3 mt-2">
+        <p className="text-sm text-gray-700">
+          Permanently delete this sermon — including its revisions,
+          preachings, resource links, slides, and stashed blocks. Bulletins,
+          social posts, and worship plans that referenced this sermon will
+          keep their content but lose the link. This cannot be undone.
+        </p>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="text-sm whitespace-nowrap px-3 py-1.5 rounded border border-red-300 text-red-700 hover:bg-red-50"
+        >
+          🗑 Delete this sermon
+        </button>
+      </div>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 flex items-start sm:items-center justify-center p-4 overflow-y-auto"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) closeModal();
+          }}
+        >
+          <div className="bg-white rounded-lg shadow-xl max-w-lg w-full p-5 my-4 space-y-4">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-serif text-xl text-red-900">
+                Delete this sermon?
+              </h3>
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={busy}
+                className="text-gray-400 hover:text-gray-700 text-2xl leading-none disabled:opacity-30"
+                aria-label="Close"
+              >
+                ×
+              </button>
+            </div>
+
+            {!counts && !error ? (
+              <p className="text-sm text-gray-500">Loading…</p>
+            ) : counts ? (
+              <>
+                <div className="text-sm text-gray-700 space-y-1.5">
+                  <p className="font-medium text-red-900">
+                    Will be permanently deleted:
+                  </p>
+                  <ul className="text-xs text-gray-700 ml-4 list-disc space-y-0.5">
+                    <li>
+                      The sermon itself ("
+                      <span className="italic">{sermon.title}</span>")
+                    </li>
+                    {counts.revisions > 0 && (
+                      <li>
+                        {counts.revisions} revision snapshot
+                        {counts.revisions === 1 ? '' : 's'}
+                      </li>
+                    )}
+                    {counts.preachings > 0 && (
+                      <li>
+                        {counts.preachings} preaching record
+                        {counts.preachings === 1 ? '' : 's'}{' '}
+                        (when/where it was preached)
+                      </li>
+                    )}
+                    {counts.resources > 0 && (
+                      <li>
+                        {counts.resources} resource link
+                        {counts.resources === 1 ? '' : 's'} (the resources
+                        themselves stay in your library)
+                      </li>
+                    )}
+                    {counts.slides > 0 && (
+                      <li>
+                        {counts.slides} workspace slide
+                        {counts.slides === 1 ? '' : 's'}
+                      </li>
+                    )}
+                    {counts.slideImages > 0 && (
+                      <li>
+                        {counts.slideImages} uploaded slide image
+                        {counts.slideImages === 1 ? '' : 's'}
+                      </li>
+                    )}
+                    {counts.stashed > 0 && (
+                      <li>
+                        {counts.stashed} stashed bulletin block
+                        {counts.stashed === 1 ? '' : 's'}
+                      </li>
+                    )}
+                    {counts.liturgyLinks > 0 && (
+                      <li>
+                        {counts.liturgyLinks} link
+                        {counts.liturgyLinks === 1 ? '' : 's'} to imported
+                        liturgies
+                      </li>
+                    )}
+                  </ul>
+                </div>
+
+                {(counts.bulletinLinks > 0 ||
+                  counts.socialPosts > 0 ||
+                  counts.worshipPlans > 0) && (
+                  <div className="text-sm text-gray-700 space-y-1.5 border-t border-gray-200 pt-3">
+                    <p className="font-medium text-amber-900">
+                      Will be unlinked (content preserved):
+                    </p>
+                    <ul className="text-xs text-gray-700 ml-4 list-disc space-y-0.5">
+                      {counts.bulletinLinks > 0 && (
+                        <li>
+                          {counts.bulletinLinks} bulletin item
+                          {counts.bulletinLinks === 1 ? '' : 's'} that
+                          referenced this sermon
+                        </li>
+                      )}
+                      {counts.socialPosts > 0 && (
+                        <li>
+                          {counts.socialPosts} social post
+                          {counts.socialPosts === 1 ? '' : 's'} sourced from
+                          this sermon
+                        </li>
+                      )}
+                      {counts.worshipPlans > 0 && (
+                        <li>
+                          {counts.worshipPlans} worship plan
+                          {counts.worshipPlans === 1 ? '' : 's'} that featured
+                          this sermon
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="space-y-1.5 pt-1">
+                  <label className="text-xs text-gray-700 block">
+                    To confirm, type the sermon title:{' '}
+                    <span className="font-mono text-red-700 break-all">
+                      {expectedConfirm}
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={confirmText}
+                    onChange={(e) => setConfirmText(e.target.value)}
+                    className="input"
+                    placeholder="Type the sermon title here"
+                    autoFocus
+                  />
+                </div>
+              </>
+            ) : null}
+
+            {error && (
+              <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+                {error}
+              </p>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={closeModal}
+                disabled={busy}
+                className="btn-secondary text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleDelete}
+                disabled={!canDelete}
+                className="text-sm px-3 py-1.5 rounded bg-red-700 text-white hover:bg-red-800 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                {busy ? 'Deleting…' : 'Delete sermon permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
