@@ -1125,6 +1125,87 @@ export async function reviseSermonManuscript({
 }
 
 /**
+ * Selected-portion revision: take a SNIPPET from the manuscript plus
+ * an instruction, return ONLY the revised snippet (not the whole
+ * manuscript). Used by the in-textarea "highlight + ask Claude" flow.
+ *
+ * Context strings (the text immediately before and after the snippet)
+ * are passed to Claude as read-only context so the revision flows
+ * smoothly with the surrounding paragraphs — Claude is told NOT to
+ * rewrite them, only to return a replacement for the snippet itself.
+ */
+export async function reviseManuscriptSnippet({
+  snippet,
+  instruction,
+  contextBefore = '',
+  contextAfter = '',
+  voiceSystemPrompt = '',
+  sermon,
+}) {
+  if (!snippet || !snippet.trim()) {
+    throw new Error('Nothing selected to revise.');
+  }
+  if (!instruction || !instruction.trim()) {
+    throw new Error('Tell Claude what to change about this portion.');
+  }
+
+  const baseSystem = [
+    "You are helping a United Methodist pastor revise a SHORT PORTION of a",
+    "sermon manuscript. The pastor has highlighted a snippet and given you an",
+    "instruction. Rewrite just that snippet according to the instruction.",
+    '',
+    '== Output rules ==',
+    '- Return ONLY the revised snippet text. No preamble, no closing remarks,',
+    '  no explanation, no markdown fences.',
+    '- The revised snippet should drop in cleanly where the original snippet was,',
+    "  flowing naturally with the surrounding context the pastor showed you.",
+    '- Match the pastor’s voice (provided as a system prompt below if available).',
+    '- Preserve manuscript markers (e.g. <pause>, [SLIDE n]) exactly — do not invent',
+    '  new ones, and do not strip existing ones unless the instruction asks.',
+    '- Stay focused on the snippet. Do NOT rewrite the surrounding context shown for',
+    '  reference; that text is read-only and is provided only so your revision flows.',
+  ].join('\n');
+
+  const systemParts = [baseSystem];
+  if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
+    systemParts.push(voiceSystemPrompt.trim());
+  }
+
+  // Sermon metadata gives Claude a bit of orientation.
+  const sermonHeader = [];
+  if (sermon?.title) sermonHeader.push(`Sermon title: ${sermon.title}`);
+  if (sermon?.scripture_reference)
+    sermonHeader.push(`Scripture reference: ${sermon.scripture_reference}`);
+
+  const userMessage = [
+    sermonHeader.length ? sermonHeader.join('\n') + '\n' : '',
+    contextBefore.trim()
+      ? '== CONTEXT BEFORE (do not rewrite) ==\n\n' +
+        contextBefore.trim() +
+        '\n\n'
+      : '',
+    '== SNIPPET TO REVISE ==\n\n' + snippet + '\n\n',
+    contextAfter.trim()
+      ? '== CONTEXT AFTER (do not rewrite) ==\n\n' +
+        contextAfter.trim() +
+        '\n\n'
+      : '',
+    '== INSTRUCTION ==\n\n' + instruction.trim(),
+  ].join('');
+
+  const response = await callClaude(
+    {
+      system: systemParts.join('\n\n'),
+      messages: [{ role: 'user', content: userMessage }],
+      max_tokens: 4000,
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(response);
+  return (text || '').trim();
+}
+
+/**
  * The static markers reference Claude needs to know about. Mirrors the
  * MANUSCRIPT_MARKERS in lib/printPreferences.js but rendered as prose
  * suitable for a system prompt.

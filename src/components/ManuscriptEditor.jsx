@@ -30,6 +30,11 @@ export default function ManuscriptEditor({
   showNumbers,
   onToggleNumbers,
   onCurrentParagraphChange,
+  // Fires whenever the textarea's text selection changes. Receives
+  // ({ start, end, selectedText }). For zero-length selections (just a
+  // caret), selectedText is ''. Optional — only set by callers that
+  // want to wire up the "Revise selection with Claude" flow.
+  onSelectionChange,
 }) {
   const taRef = useRef(null);
   const mirrorRef = useRef(null);
@@ -168,6 +173,18 @@ export default function ManuscriptEditor({
     if (!ta) return;
     const pos = ta.selectionStart || 0;
     const text = value || '';
+    // Fire the selection callback if the parent wired it up. Even for
+    // an empty selection (start == end) the parent might want to know
+    // — e.g. to clear a "Revise selection" toolbar.
+    if (typeof onSelectionChange === 'function') {
+      const start = ta.selectionStart || 0;
+      const end = ta.selectionEnd || 0;
+      onSelectionChange({
+        start,
+        end,
+        selectedText: end > start ? text.slice(start, end) : '',
+      });
+    }
     // Count *paragraph blocks* that start before `pos`. A paragraph
     // block is a non-empty run of text separated by /\n[ \t]*\n+/.
     // We walk the same regex but only count blocks whose start <= pos.

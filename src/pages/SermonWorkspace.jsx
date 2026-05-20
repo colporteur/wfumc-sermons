@@ -21,6 +21,7 @@ import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import ManuscriptEditor, {
   ParagraphNumberToggle,
 } from '../components/ManuscriptEditor.jsx';
+import SelectionReviseModal from '../components/SelectionReviseModal.jsx';
 import {
   consumePendingBlockForSermon,
   buildPendingBlockInstruction,
@@ -159,6 +160,17 @@ export default function SermonWorkspace() {
     }
   });
   const [currentParagraphIdx, setCurrentParagraphIdx] = useState(-1);
+  // Selection-revise state — tracks the user's current text selection
+  // in the manuscript so we can offer the "✨ Revise selection with
+  // Claude" button. Captured fresh-frozen when they open the modal so
+  // edits in the textarea while the modal is open don't shift the range.
+  const [currentSelection, setCurrentSelection] = useState({
+    start: 0,
+    end: 0,
+    selectedText: '',
+  });
+  const [reviseSelOpen, setReviseSelOpen] = useState(false);
+  const [reviseSelSnapshot, setReviseSelSnapshot] = useState(null);
   useEffect(() => {
     try {
       sessionStorage.setItem(
@@ -934,7 +946,23 @@ export default function SermonWorkspace() {
                 </span>
               )}
             </h2>
-            <div className="flex items-baseline gap-3">
+            <div className="flex items-baseline gap-3 flex-wrap">
+              {!isLocked && currentSelection.selectedText.trim().length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Freeze the current selection so edits in the
+                    // textarea while the modal is open don't shift it.
+                    setReviseSelSnapshot({ ...currentSelection });
+                    setReviseSelOpen(true);
+                  }}
+                  className="text-xs px-2 py-0.5 rounded border border-umc-300 text-umc-800 hover:bg-umc-50"
+                  title="Ask Claude to revise just the highlighted portion (the rest of the manuscript stays as you have it)."
+                >
+                  ✨ Revise selection ({countWords(currentSelection.selectedText)} word
+                  {countWords(currentSelection.selectedText) === 1 ? '' : 's'})
+                </button>
+              )}
               <ParagraphNumberToggle
                 checked={showParagraphNumbers}
                 onChange={setShowParagraphNumbers}
@@ -960,6 +988,7 @@ export default function SermonWorkspace() {
             textareaStyle={{ minHeight: '60vh' }}
             showNumbers={showParagraphNumbers}
             onCurrentParagraphChange={setCurrentParagraphIdx}
+            onSelectionChange={setCurrentSelection}
           />
         </div>
       </div>
@@ -1032,6 +1061,41 @@ export default function SermonWorkspace() {
             ? messages[diffForIndex]?.manuscriptAfter || ''
             : ''
         }
+      />
+
+      {/* "Revise selected portion with Claude" — opened from the
+          manuscript pane header when the user highlights text. */}
+      <SelectionReviseModal
+        open={reviseSelOpen && !!reviseSelSnapshot}
+        onClose={() => setReviseSelOpen(false)}
+        snippet={reviseSelSnapshot?.selectedText || ''}
+        contextBefore={
+          reviseSelSnapshot
+            ? (manuscript || '').slice(
+                Math.max(0, reviseSelSnapshot.start - 800),
+                reviseSelSnapshot.start
+              )
+            : ''
+        }
+        contextAfter={
+          reviseSelSnapshot
+            ? (manuscript || '').slice(
+                reviseSelSnapshot.end,
+                Math.min((manuscript || '').length, reviseSelSnapshot.end + 800)
+              )
+            : ''
+        }
+        sermon={sermon}
+        voiceSystemPrompt={voicePrompt}
+        onReplace={(revised) => {
+          if (!reviseSelSnapshot) return;
+          const before = (manuscript || '').slice(0, reviseSelSnapshot.start);
+          const after = (manuscript || '').slice(reviseSelSnapshot.end);
+          setManuscript(before + revised + after);
+          // Clear the floating "selection" indicator since the range is
+          // now stale — the user can re-select if they want another go.
+          setCurrentSelection({ start: 0, end: 0, selectedText: '' });
+        }}
       />
     </div>
   );
