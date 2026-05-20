@@ -1085,6 +1085,7 @@ export default function SermonWorkspace() {
               )
             : ''
         }
+        fullManuscript={manuscript || ''}
         sermon={sermon}
         voiceSystemPrompt={voicePrompt}
         onReplace={(revised) => {

@@ -19,11 +19,13 @@ export default function SelectionReviseModal({
   snippet,
   contextBefore = '',
   contextAfter = '',
+  fullManuscript = '',
   sermon,
   voiceSystemPrompt = '',
   onReplace,
 }) {
   const [instruction, setInstruction] = useState('');
+  const [includeFullManuscript, setIncludeFullManuscript] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
@@ -34,6 +36,7 @@ export default function SelectionReviseModal({
   useEffect(() => {
     if (!open) return;
     setInstruction('');
+    setIncludeFullManuscript(false);
     setError(null);
     setResult(null);
     setCopied(false);
@@ -60,6 +63,10 @@ export default function SelectionReviseModal({
         contextAfter,
         sermon,
         voiceSystemPrompt,
+        // Only send the full manuscript if the user opted in AND we
+        // actually have one to send.
+        fullManuscript:
+          includeFullManuscript && fullManuscript ? fullManuscript : '',
       });
       setResult(revised);
     } catch (e) {
@@ -108,6 +115,13 @@ export default function SelectionReviseModal({
   const resultWordCount = result
     ? result.trim().split(/\s+/).filter(Boolean).length
     : 0;
+  const fullManuscriptWordCount = (fullManuscript || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean).length;
+  const canIncludeFull =
+    fullManuscriptWordCount > 0 &&
+    fullManuscript.trim() !== (snippet || '').trim();
 
   return (
     <div
@@ -165,6 +179,26 @@ export default function SelectionReviseModal({
             Tip: press Enter to send, Shift+Enter for a newline.
           </p>
         </div>
+
+        {canIncludeFull && (
+          <label className="flex items-start gap-2 cursor-pointer text-xs text-gray-700">
+            <input
+              type="checkbox"
+              checked={includeFullManuscript}
+              onChange={(e) => setIncludeFullManuscript(e.target.checked)}
+              disabled={busy}
+              className="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-umc-700"
+            />
+            <span>
+              Include full manuscript as background
+              <span className="text-gray-400 ml-1">
+                (~{fullManuscriptWordCount.toLocaleString()} words — gives Claude
+                the full arc of the sermon; uses more tokens but still only
+                rewrites the snippet)
+              </span>
+            </span>
+          </label>
+        )}
 
         {error && (
           <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">

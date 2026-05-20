@@ -1141,6 +1141,7 @@ export async function reviseManuscriptSnippet({
   contextAfter = '',
   voiceSystemPrompt = '',
   sermon,
+  fullManuscript = '',
 }) {
   if (!snippet || !snippet.trim()) {
     throw new Error('Nothing selected to revise.');
@@ -1148,6 +1149,9 @@ export async function reviseManuscriptSnippet({
   if (!instruction || !instruction.trim()) {
     throw new Error('Tell Claude what to change about this portion.');
   }
+  const includeFull =
+    !!fullManuscript && !!fullManuscript.trim() &&
+    fullManuscript.trim() !== snippet.trim();
 
   const baseSystem = [
     "You are helping a United Methodist pastor revise a SHORT PORTION of a",
@@ -1164,6 +1168,13 @@ export async function reviseManuscriptSnippet({
     '  new ones, and do not strip existing ones unless the instruction asks.',
     '- Stay focused on the snippet. Do NOT rewrite the surrounding context shown for',
     '  reference; that text is read-only and is provided only so your revision flows.',
+    ...(includeFull
+      ? [
+          '- If a FULL MANUSCRIPT section is included, use it only to understand the',
+          '  arc, themes, and tone of the whole sermon so your snippet fits in. Your',
+          '  output must STILL be only the revised snippet — do not echo the manuscript.',
+        ]
+      : []),
   ].join('\n');
 
   const systemParts = [baseSystem];
@@ -1177,15 +1188,23 @@ export async function reviseManuscriptSnippet({
   if (sermon?.scripture_reference)
     sermonHeader.push(`Scripture reference: ${sermon.scripture_reference}`);
 
+  // When the full manuscript is included for orientation, we skip the
+  // before/after context excerpts (the manuscript already has them and
+  // they'd just chew through extra tokens).
   const userMessage = [
     sermonHeader.length ? sermonHeader.join('\n') + '\n' : '',
-    contextBefore.trim()
+    includeFull
+      ? '== FULL MANUSCRIPT (for orientation only — do not rewrite, do not echo) ==\n\n' +
+        fullManuscript.trim() +
+        '\n\n'
+      : '',
+    !includeFull && contextBefore.trim()
       ? '== CONTEXT BEFORE (do not rewrite) ==\n\n' +
         contextBefore.trim() +
         '\n\n'
       : '',
     '== SNIPPET TO REVISE ==\n\n' + snippet + '\n\n',
-    contextAfter.trim()
+    !includeFull && contextAfter.trim()
       ? '== CONTEXT AFTER (do not rewrite) ==\n\n' +
         contextAfter.trim() +
         '\n\n'
