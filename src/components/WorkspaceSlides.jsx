@@ -58,6 +58,14 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
   const [busyId, setBusyId] = useState(null); // 'new' or a slide id
   const [suggestModalOpen, setSuggestModalOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
+  // Batch NRSVUe lookup state. `batchLookup.progress` like "3 / 7"
+  // while running; non-null `batchLookup.summary` shows the post-run
+  // banner ({ filled, skippedHadBody, skippedNoMatch, failed, total, errors }).
+  const [batchLookup, setBatchLookup] = useState({
+    running: false,
+    progress: '',
+    summary: null,
+  });
 
   const handleExportPptx = async () => {
     if (slides.length === 0) return;
@@ -70,6 +78,118 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
     } finally {
       setExporting(false);
     }
+  };
+
+  // For a given slide, return the first text field that looks like a
+  // scripture reference (e.g. "Acts 17:23-28", "1 John 4:7"). Title is
+  // checked first since that's what the pastor literally said in the
+  // request, then marker_description (the existing per-slide ✨ button
+  // uses that field, so a lot of slides already have refs there).
+  // Returns null if neither field is a scripture reference.
+  const slideScriptureRef = (slide) => {
+    const candidates = [
+      (slide.title || '').trim(),
+      (slide.marker_description || '').trim(),
+    ];
+    for (const c of candidates) {
+      if (c && looksLikeScriptureReference(c)) return c;
+    }
+    return null;
+  };
+
+  // Batch NRSVUe lookup: find every slide whose title or marker
+  // description is a scripture reference, fetch the verses via Claude,
+  // and drop the result into the Body field. Skips slides that already
+  // have Body content so hand-edits aren't blown away.
+  const handleBatchLookupScripture = async () => {
+    if (slides.length === 0) {
+      setError('No slides yet.');
+      return;
+    }
+    // Partition the slide list up front so we can show the pastor what's
+    // about to happen before any network calls go out.
+    const matched = slides
+      .map((s, i) => ({ slide: s, slideNumber: i + 1, ref: slideScriptureRef(s) }))
+      .filter((m) => m.ref);
+    if (matched.length === 0) {
+      setError(
+        'No slides have a scripture reference in the Title or Slide description field. ' +
+          'Example refs the matcher recognises: "Acts 17:23-28", "1 John 4:7", "Psalm 23".'
+      );
+      return;
+    }
+    const toFill = matched.filter(
+      (m) => !(m.slide.body && m.slide.body.trim().length > 0)
+    );
+    const skippedHadBody = matched.length - toFill.length;
+    if (toFill.length === 0) {
+      setError(
+        `Found ${matched.length} scripture-titled slide${matched.length === 1 ? '' : 's'}, ` +
+          `but every one already has Body content. Clear the Body field on the slides you want refreshed, then try again.`
+      );
+      return;
+    }
+    const previewList = toFill
+      .slice(0, 8)
+      .map((m) => `  #${m.slideNumber} → ${m.ref}`)
+      .join('\n');
+    const moreLine =
+      toFill.length > 8 ? `\n  …and ${toFill.length - 8} more` : '';
+    if (
+      !window.confirm(
+        `Look up ${toFill.length} scripture passage${toFill.length === 1 ? '' : 's'} from the NRSVUe?\n\n` +
+          previewList +
+          moreLine +
+          (skippedHadBody > 0
+            ? `\n\n${skippedHadBody} matching slide${skippedHadBody === 1 ? '' : 's'} already ha${
+                skippedHadBody === 1 ? 's' : 've'
+              } Body content and will be skipped.`
+            : '') +
+          '\n\nEach lookup is a separate Claude call — this may take a minute for long lists.'
+      )
+    ) {
+      return;
+    }
+
+    setError(null);
+    setBatchLookup({ running: true, progress: `0 / ${toFill.length}`, summary: null });
+    const errors = [];
+    let filled = 0;
+    let failed = 0;
+    // Sequential, not parallel — Claude rate-limits and the user can see
+    // progress tick up. Keep going on errors so one bad ref doesn't
+    // wipe out the rest of the run.
+    for (let i = 0; i < toFill.length; i++) {
+      const { slide, slideNumber, ref } = toFill[i];
+      setBatchLookup({
+        running: true,
+        progress: `${i + 1} / ${toFill.length} (#${slideNumber} → ${ref})`,
+        summary: null,
+      });
+      try {
+        const text = await lookupScriptureNRSVUe(ref);
+        const updated = await updateSlide(slide.id, { body: text });
+        // Update local state slide-by-slide so the UI reflects each fill
+        // as the run progresses (and a mid-run failure still leaves the
+        // successful ones visible).
+        setSlides((prev) => prev.map((s) => (s.id === slide.id ? updated : s)));
+        filled++;
+      } catch (e) {
+        failed++;
+        errors.push(`#${slideNumber} (${ref}): ${e?.message || String(e)}`);
+      }
+    }
+    setBatchLookup({
+      running: false,
+      progress: '',
+      summary: {
+        filled,
+        skippedHadBody,
+        failed,
+        total: matched.length,
+        errors,
+      },
+    });
   };
 
   // Insert <SLIDE #N – Description> markers into the manuscript for
@@ -764,6 +884,21 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
             <span className="text-gray-300 px-1" aria-hidden="true">|</span>
             <button
               type="button"
+              onClick={handleBatchLookupScripture}
+              disabled={slides.length === 0 || batchLookup.running}
+              className="btn-secondary text-xs disabled:opacity-50"
+              title={
+                slides.length === 0
+                  ? 'Add at least one slide first.'
+                  : 'Walk every slide whose Title or Slide description is a scripture reference (e.g. "Acts 17:23-28"), look it up in the NRSVUe via Claude, and fill the Body field. Slides that already have Body content are skipped.'
+              }
+            >
+              {batchLookup.running
+                ? `Looking up ${batchLookup.progress}…`
+                : '✨ Fill scripture bodies (NRSVUe)'}
+            </button>
+            <button
+              type="button"
               onClick={() => setSuggestModalOpen(true)}
               disabled={!manuscript || !manuscript.trim()}
               className="btn-secondary text-xs disabled:opacity-50"
@@ -790,6 +925,50 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
         <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
           {error}
         </p>
+      )}
+
+      {batchLookup.summary && (
+        <div
+          className={
+            'text-xs rounded px-2 py-1.5 border ' +
+            (batchLookup.summary.failed > 0
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-green-50 border-green-200 text-green-900')
+          }
+        >
+          <div className="flex items-baseline justify-between gap-2">
+            <span>
+              {batchLookup.summary.failed > 0
+                ? `Batch scripture lookup finished with ${batchLookup.summary.failed} error${
+                    batchLookup.summary.failed === 1 ? '' : 's'
+                  }.`
+                : 'Batch scripture lookup finished.'}
+              {' '}
+              Filled {batchLookup.summary.filled} Body field
+              {batchLookup.summary.filled === 1 ? '' : 's'}
+              {batchLookup.summary.skippedHadBody > 0
+                ? `, skipped ${batchLookup.summary.skippedHadBody} that already had content`
+                : ''}
+              .
+            </span>
+            <button
+              type="button"
+              onClick={() =>
+                setBatchLookup((b) => ({ ...b, summary: null }))
+              }
+              className="text-[10px] opacity-60 hover:opacity-100 underline"
+            >
+              dismiss
+            </button>
+          </div>
+          {batchLookup.summary.errors.length > 0 && (
+            <ul className="mt-1 list-disc list-inside text-[11px]">
+              {batchLookup.summary.errors.map((msg, i) => (
+                <li key={i}>{msg}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
 
       {!collapsed && (
