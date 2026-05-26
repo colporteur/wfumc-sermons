@@ -16,7 +16,6 @@ import {
   insertSlideMarkersIntoManuscript,
   clearSlideMarkersFromManuscript,
   renumberSlideMarkersInManuscript,
-  findManuscriptSlideMarkers,
   splitIntoSentences,
   looksLikeScriptureReference,
 } from '../lib/paragraphs';
@@ -241,22 +240,54 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
       setError('Manuscript is empty.');
       return;
     }
-    const markers = findManuscriptSlideMarkers(manuscript);
-    if (markers.length === 0) {
+    // Use renumberSlideMarkersInManuscript so we pick up BOTH numbered
+    // markers like "<SLIDE #1 – Foo>" AND unnumbered shorthand like
+    // "<SLIDE – Foo>" that the pastor scribbles inline while editing.
+    // The helper walks markers in manuscript order, assigns sequential
+    // numbers to every match, and returns the rewritten manuscript +
+    // a list of slide stubs. Only marker tokens are rewritten — every
+    // other character of the manuscript is preserved verbatim.
+    const {
+      newText: renumberedManuscript,
+      slides: markers,
+      renumbered,
+      total,
+    } = renumberSlideMarkersInManuscript(manuscript);
+
+    if (total === 0) {
       setError(
-        'No <SLIDE> markers found in the manuscript. Markers look like "<SLIDE #1 – Description>".'
+        'No <SLIDE> markers found in the manuscript. Markers look like ' +
+          '"<SLIDE #1 – Description>" or the unnumbered shorthand ' +
+          '"<SLIDE – Description>".'
       );
       return;
     }
-    // Sort by marker number, then by paragraph order as tiebreaker.
-    markers.sort(
-      (a, b) => a.number - b.number || a.paragraphIdx - b.paragraphIdx
-    );
 
-    // Filter out markers that already have a corresponding slide:
-    // same description AND same anchor paragraph. Match by marker_description
-    // (preferred) OR by title (back-compat for slides created before the
-    // marker_description column existed).
+    // If renumbering would actually change manuscript text (because of
+    // unnumbered shorthand or out-of-order numbers), we need permission
+    // to write the manuscript back. A locked manuscript can't be
+    // updated — surface the gate clearly rather than silently dropping
+    // the unnumbered markers.
+    const needsManuscriptRewrite =
+      renumbered > 0 && renumberedManuscript !== manuscript;
+    if (needsManuscriptRewrite && !onManuscriptChange) {
+      setError(
+        `Found ${total} marker${total === 1 ? '' : 's'} including ` +
+          `${renumbered} that need${renumbered === 1 ? 's' : ''} renumbering ` +
+          `(unnumbered shorthand or out-of-order numbers). The manuscript ` +
+          `is locked, so we can't rewrite the marker numbers in place. ` +
+          `Unlock the manuscript and try again.`
+      );
+      return;
+    }
+
+    // Dedupe: same description + same anchor paragraph as an existing
+    // slide → skip. Match marker_description first (preferred) or fall
+    // back to title (back-compat for slides created before the
+    // marker_description column existed). We deliberately don't dedupe
+    // on number — sequential renumbering means a given description's
+    // number may shift from run to run, but the description+anchor
+    // pair is stable.
     const newMarkers = markers.filter(
       (m) =>
         !slides.some(
@@ -269,27 +300,50 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
     );
     const skipped = markers.length - newMarkers.length;
 
-    if (newMarkers.length === 0) {
+    if (newMarkers.length === 0 && !needsManuscriptRewrite) {
       setError(
-        `All ${markers.length} markers already have matching slides in the panel.`
+        `All ${total} markers already have matching slides in the panel.`
       );
       return;
     }
 
+    const renumberClause =
+      needsManuscriptRewrite
+        ? `\n\n${renumbered} marker${renumbered === 1 ? '' : 's'} ` +
+          `(unnumbered shorthand or out-of-order numbers) will be renumbered ` +
+          `sequentially in the manuscript. Only the <SLIDE …> tokens are ` +
+          `touched — your prose isn't changed.`
+        : '';
+    const skippedClause =
+      skipped > 0
+        ? `\n\n${skipped} marker${skipped === 1 ? '' : 's'} already ` +
+          `${skipped === 1 ? 'has' : 'have'} matching slides and will be ` +
+          `skipped.`
+        : '';
     if (
       !window.confirm(
-        `Found ${markers.length} <SLIDE> marker${markers.length === 1 ? '' : 's'} in the manuscript.\n\n` +
+        `Found ${total} <SLIDE> marker${total === 1 ? '' : 's'} in the ` +
+          `manuscript.\n\n` +
           `Create ${newMarkers.length} new slide${newMarkers.length === 1 ? '' : 's'}?` +
-          (skipped > 0
-            ? `\n\n${skipped} marker${skipped === 1 ? '' : 's'} already have matching slides and will be skipped.`
-            : '') +
-          '\n\nAll new slides default to the "Content" type. You can edit type/body/notes after.'
+          skippedClause +
+          renumberClause +
+          '\n\nAll new slides default to the "Content" type. You can ' +
+          'edit type/body/notes after.'
       )
     ) {
       return;
     }
 
     setError(null);
+
+    // Write the renumbered manuscript first (if changed). This is what
+    // gives the unnumbered shorthand its number. Done before the slide
+    // inserts so the new slides' anchor_paragraph_text matches the
+    // text the pastor will see after the rewrite.
+    if (needsManuscriptRewrite) {
+      onManuscriptChange(renumberedManuscript);
+    }
+
     const startOrder = slides.length;
     const created = [];
     try {
@@ -833,7 +887,7 @@ export default function WorkspaceSlides({ sermon, manuscript, onManuscriptChange
               title={
                 !manuscript || !manuscript.trim()
                   ? 'Manuscript is empty.'
-                  : 'Scan the manuscript for existing <SLIDE> markers and create slide rows for each one.'
+                  : 'Scan the manuscript for <SLIDE> markers (numbered OR unnumbered shorthand like "<SLIDE – Idea>") and create slide rows for each one. Unnumbered markers get numbered sequentially in the manuscript on the way through — only marker tokens are rewritten, your prose is untouched.'
               }
             >
               ↪ Create from markers
