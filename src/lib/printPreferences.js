@@ -232,3 +232,49 @@ export function renderTokens(template, ctx = {}) {
     .replace(/\{page\}/g, ctx.page || '#');
 }
 export const renderHeaderTokens = renderTokens;
+
+// Export-time tokenizer. Same substitutions as renderTokens for the
+// static tokens (title / scripture / date / church), but instead of
+// flattening {page} into a literal '#' it leaves a typed marker the
+// docx builder can replace with a real Word PageNumber field. The
+// builder interleaves text runs with a page-field run so the page
+// number renders inline at the pastor's chosen spot in the template.
+//
+// Returns:
+//   {
+//     segments: [
+//       { kind: 'text', text: string } |
+//       { kind: 'page' },
+//       ...
+//     ],
+//     hasPageToken: boolean
+//   }
+//
+// `hasPageToken` lets the caller suppress its own standalone
+// page-number paragraph (so the page number doesn't render twice).
+export function renderTokensToSegments(template, ctx = {}) {
+  if (!template) return { segments: [], hasPageToken: false };
+  // Substitute the static tokens first; defer {page} so the split
+  // below sees only real page-field placeholders, not anything the
+  // pastor might have typed verbatim.
+  const substituted = template
+    .replace(/\{title\}/g, ctx.title || '')
+    .replace(/\{scripture\}/g, ctx.scripture || '')
+    .replace(/\{date\}/g, ctx.date || '')
+    .replace(/\{church\}/g, ctx.church || '');
+  const parts = substituted.split(/\{page\}/);
+  if (parts.length === 1) {
+    // No {page} at all — single text segment.
+    return {
+      segments: parts[0] ? [{ kind: 'text', text: parts[0] }] : [],
+      hasPageToken: false,
+    };
+  }
+  // Interleave: text, page, text, page, …, text.
+  const segments = [];
+  for (let i = 0; i < parts.length; i++) {
+    if (parts[i]) segments.push({ kind: 'text', text: parts[i] });
+    if (i < parts.length - 1) segments.push({ kind: 'page' });
+  }
+  return { segments, hasPageToken: true };
+}

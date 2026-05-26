@@ -23,7 +23,11 @@ import {
   convertInchesToTwip,
   Packer,
 } from 'docx';
-import { loadPrintPrefs, renderTokens, DEFAULT_PRINT_PREFS } from './printPreferences';
+import {
+  loadPrintPrefs,
+  renderTokensToSegments,
+  DEFAULT_PRINT_PREFS,
+} from './printPreferences';
 
 // --- Marker detection ------------------------------------------------
 
@@ -223,23 +227,38 @@ function buildBodyParagraphs(manuscript, prefs) {
   return out;
 }
 
+// Turn a list of {kind:'text'|'page'} segments into TextRun children
+// suitable for a docx Paragraph. The 'page' segment becomes a TextRun
+// that hosts a live Word PageNumber.CURRENT field — so the page
+// number renders inline at the pastor's chosen position in the
+// header/footer template instead of as a static '#' character.
+function segmentsToRuns(segments, runOpts) {
+  return segments.map((seg) => {
+    if (seg.kind === 'page') {
+      return new TextRun({
+        ...runOpts,
+        children: [PageNumber.CURRENT],
+      });
+    }
+    return new TextRun({ ...runOpts, text: seg.text });
+  });
+}
+
 function buildHeader(prefs, ctx) {
-  const text = renderTokens(prefs.header_content, ctx);
-  if (!text) {
+  const { segments } = renderTokensToSegments(prefs.header_content, ctx);
+  if (segments.length === 0) {
     return new Header({ children: [new Paragraph({ children: [] })] });
   }
+  const runOpts = {
+    italics: !!prefs.header_italic,
+    font: prefs.font_family,
+    size: (prefs.header_size_pt || 12) * 2,
+  };
   return new Header({
     children: [
       new Paragraph({
         alignment: toAlignment(prefs.header_alignment),
-        children: [
-          new TextRun({
-            text,
-            italics: !!prefs.header_italic,
-            font: prefs.font_family,
-            size: (prefs.header_size_pt || 12) * 2,
-          }),
-        ],
+        children: segmentsToRuns(segments, runOpts),
       }),
     ],
   });
@@ -248,29 +267,36 @@ function buildHeader(prefs, ctx) {
 function buildFooter(prefs, ctx) {
   const paragraphs = [];
 
-  const text = renderTokens(prefs.footer_content, ctx);
-  if (text) {
+  const { segments, hasPageToken } = renderTokensToSegments(
+    prefs.footer_content,
+    ctx
+  );
+  if (segments.length > 0) {
+    const runOpts = {
+      italics: !!prefs.footer_italic,
+      font: prefs.font_family,
+      size: (prefs.footer_size_pt || 12) * 2,
+    };
     paragraphs.push(
       new Paragraph({
         alignment: toAlignment(prefs.footer_alignment),
-        children: [
-          new TextRun({
-            text,
-            italics: !!prefs.footer_italic,
-            font: prefs.font_family,
-            size: (prefs.footer_size_pt || 12) * 2,
-          }),
-        ],
+        children: segmentsToRuns(segments, runOpts),
       })
     );
   }
 
-  // Page number paragraph, if requested AND the position is in the bottom
-  // half. Top-half positions get rendered into the header instead — but
-  // the standard pulpit-manuscript style is bottom_center, so this is
-  // the common path. (Top positions are a follow-up.)
+  // Standalone page-number paragraph — only emit when the user's
+  // chosen page_number_position is in the bottom half AND the footer
+  // template DOESN'T already render its own {page} field inline. The
+  // second guard prevents the page number from being rendered twice
+  // when the pastor's template includes {page}.
   const pos = prefs.page_number_position;
-  if (pos && pos !== 'none' && pos.startsWith('bottom_')) {
+  if (
+    pos &&
+    pos !== 'none' &&
+    pos.startsWith('bottom_') &&
+    !hasPageToken
+  ) {
     const alignment = pos.endsWith('left')
       ? AlignmentType.LEFT
       : pos.endsWith('right')
@@ -391,11 +417,15 @@ function formatDateForFooter(_unused, dateObj) {
   });
 }
 
-// Sanitize a sermon title into a safe filename component.
+// Sanitize a sermon title into a safe filename component. Forbidden
+// chars are replaced with a SPACE rather than stripped, so e.g. a
+// scripture reference like "Acts 17:22-31" becomes "Acts 17 22-31"
+// (chapter and verse stay readably separated) instead of being
+// crushed together into "Acts 1722-31".
 export function safeFilename(title) {
   if (!title) return 'sermon';
   return title
-    .replace(/[\\/:*?"<>|]+/g, '')
+    .replace(/[\\/:*?"<>|]+/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 80) || 'sermon';
