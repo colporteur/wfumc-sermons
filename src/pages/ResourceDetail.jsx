@@ -1,14 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
-import { analyzeResource, analyzeResourceWithImages } from '../lib/claude';
+import {
+  analyzeResource,
+  analyzeResourceWithImages,
+  generateContentFromImages,
+} from '../lib/claude';
 import { listMyLibraries } from '../lib/libraries';
 import {
   publicResourceImageUrl,
   listResourceImages,
   addImageToResource,
   removeResourceImage,
+  uploadResourceImage,
+  deleteStorageObject,
+  fileHash,
 } from '../lib/resourceImages';
+import { prepareImageForUpload } from '../lib/imageHelpers';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import PairWithScriptureModal from '../components/PairWithScriptureModal.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
@@ -54,6 +62,8 @@ export default function ResourceDetail() {
   const [uploadingImage, setUploadingImage] = useState(false);
   const [imageError, setImageError] = useState(null);
   const [removingImageId, setRemovingImageId] = useState(null);
+  const [rotatingImageId, setRotatingImageId] = useState(null);
+  const [generatingContent, setGeneratingContent] = useState(false);
   const fileInputRef = useRef(null);
   // Vision analyze state
   const [visionRunning, setVisionRunning] = useState(false);
@@ -131,25 +141,63 @@ export default function ResourceDetail() {
   };
 
   // Add one or more images to the current resource (works in any mode).
+  //
+  // Mobile / PWA gotcha: the File objects returned by <input type="file">
+  // can become stale ("file could not be read") if we hold the reference
+  // across an async boundary — the OS can revoke the descriptor when
+  // the page loses focus or memory pressure kicks in. To dodge that, we
+  // pipe each file through prepareImageForUpload SYNCHRONOUSLY (well,
+  // immediately after the picker returns) which decodes the bytes into
+  // a fresh JPEG Blob. Once we hold the Blob, the original File can
+  // expire without consequence. Bonus: phone photos get downscaled to
+  // 1600px, slashing upload time and storage cost.
   const handleImageUpload = async (e) => {
     const files = Array.from(e.target.files || []);
     if (!files.length || !user?.id || !resource) return;
     setUploadingImage(true);
     setImageError(null);
+    // Snapshot the original filenames before any async work, because
+    // even the .name property can vanish if the File handle goes stale.
+    const originalNames = files.map((f) => f.name || 'image');
     try {
-      // Place new images at the end (sort_order = current max + 1+).
+      // Step 1: decode every file to a JPEG Blob IMMEDIATELY. Any file
+      // that's not actually an image (or HEIC the browser can't decode)
+      // fails fast here and the rest of the batch still uploads.
+      const prepared = [];
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        if (f.type && !f.type.startsWith('image/')) {
+          setImageError(
+            `Skipped non-image file: ${originalNames[i]}`
+          );
+          continue;
+        }
+        try {
+          const { blob, mediaType } = await prepareImageForUpload(f);
+          // Build a File-like object so the existing upload helper
+          // (which expects .name / .type / .arrayBuffer) keeps working
+          // without a signature change.
+          const stable = new File(
+            [blob],
+            renameToJpg(originalNames[i]),
+            { type: mediaType }
+          );
+          prepared.push(stable);
+        } catch (decodeErr) {
+          setImageError(
+            `Couldn't prepare ${originalNames[i]}: ${decodeErr.message || decodeErr}`
+          );
+        }
+      }
+      if (prepared.length === 0) return;
+      // Step 2: upload each prepared Blob.
       const baseSort = images.length > 0
         ? Math.max(...images.map((i) => i.sort_order)) + 1
         : 0;
       const added = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        if (!f.type.startsWith('image/')) {
-          setImageError(`Skipped non-image file: ${f.name}`);
-          continue;
-        }
+      for (let i = 0; i < prepared.length; i++) {
         const row = await addImageToResource({
-          file: f,
+          file: prepared[i],
           ownerUserId: user.id,
           resourceId: resource.id,
           sortOrder: baseSort + i,
@@ -165,6 +213,15 @@ export default function ResourceDetail() {
     }
   };
 
+  // Helper used by handleImageUpload + handleRotateImage.
+  // Original might be "IMG_4012.HEIC" or "screenshot.png" or "" — strip
+  // the extension and add ".jpg" since prepareImageForUpload always
+  // re-encodes as JPEG.
+  function renameToJpg(name) {
+    const base = (name || 'image').replace(/\.[^.]+$/, '');
+    return (base || 'image') + '.jpg';
+  }
+
   const handleImageRemove = async (img) => {
     if (!window.confirm('Remove this image? This can\'t be undone.')) return;
     setRemovingImageId(img.id);
@@ -176,6 +233,125 @@ export default function ResourceDetail() {
       setImageError(err.message || String(err));
     } finally {
       setRemovingImageId(null);
+    }
+  };
+
+  // Rotate a stored image 90° clockwise and re-upload. The rotated
+  // bytes are written to a fresh storage path (the resource-images
+  // bucket uses upsert: false), then the resource_images row's
+  // image_path + content_hash are updated to point at the new file.
+  // The old storage object is deleted best-effort.
+  //
+  // Why bake the rotation into the file (vs. CSS transform on display):
+  // the rotated image is what gets piped to Claude vision, what shows
+  // in any future printable export, and what gets shared via the
+  // public URL. Storing the rotated bytes means every consumer sees
+  // the same orientation without having to apply rotation themselves.
+  const handleRotateImage = async (img) => {
+    if (!resource?.id || !user?.id) return;
+    setRotatingImageId(img.id);
+    setImageError(null);
+    try {
+      // Fetch the current image bytes via the public URL. We can't read
+      // directly from the user's screen-rendered <img> because of canvas
+      // taint rules; fetch() lets us grab a fresh Blob with no taint.
+      const url = publicResourceImageUrl(img.image_path);
+      if (!url) throw new Error('No image URL.');
+      const res = await fetch(url, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`Couldn't load image (${res.status}).`);
+      const sourceBlob = await res.blob();
+      // Decode → rotate 90° CW → re-encode as JPEG.
+      const rotated = await rotateImageBlob90CW(sourceBlob);
+      const stable = new File([rotated], renameToJpg(img.image_path), {
+        type: 'image/jpeg',
+      });
+      // Upload as a new path; update the row to point at it.
+      const newPath = await uploadResourceImage({
+        file: stable,
+        ownerUserId: user.id,
+        resourceId: resource.id,
+      });
+      const newHash = await fileHash(stable);
+      const { error: updErr } = await withTimeout(
+        supabase
+          .from('resource_images')
+          .update({
+            image_path: newPath,
+            content_hash: newHash,
+          })
+          .eq('id', img.id)
+      );
+      if (updErr) {
+        // Roll back the upload so we don't orphan storage.
+        try {
+          await deleteStorageObject(newPath);
+        } catch {
+          /* swallow */
+        }
+        throw updErr;
+      }
+      // Reflect in local state. Bumping a cache-busting param on the
+      // URL would be nice, but since image_path itself changed the
+      // browser will re-fetch under the new URL automatically.
+      setImages((prev) =>
+        prev.map((row) =>
+          row.id === img.id
+            ? { ...row, image_path: newPath, content_hash: newHash }
+            : row
+        )
+      );
+      // Best-effort delete of the previous storage object.
+      try {
+        await deleteStorageObject(img.image_path);
+      } catch {
+        /* swallow — old object lingering isn't fatal */
+      }
+    } catch (err) {
+      setImageError(err.message || String(err));
+    } finally {
+      setRotatingImageId(null);
+    }
+  };
+
+  // Narrow vision pass: ask Claude for ONLY the Content text based on
+  // the attached images and drop it straight into the draft Content
+  // field. Unlike runVisionAnalyze (which goes through the
+  // suggestions-review panel), this writes directly to the draft so
+  // the pastor can edit immediately. They have to click Save to
+  // persist — same as any other manual edit.
+  const runGenerateContent = async () => {
+    if (images.length === 0 || !resource) return;
+    setGeneratingContent(true);
+    setVisionError(null);
+    try {
+      const text = await generateContentFromImages({
+        images: images.map((i) => ({
+          image_path: i.image_path,
+          caption: i.caption,
+        })),
+        existing: {
+          title: (draft || resource).title,
+          content: (draft || resource).content,
+          source: (draft || resource).source,
+          resource_type: (draft || resource).resource_type,
+        },
+      });
+      // If we're in edit mode (draft present), write into the draft so
+      // the textarea reflects the new content. If we're in read mode,
+      // start an edit session and pre-fill it.
+      if (draft) {
+        setDraft({ ...draft, content: text });
+      } else {
+        setDraft({
+          ...resource,
+          content: text,
+          themes: resource.themes || [],
+        });
+      }
+    } catch (e) {
+      setVisionError(e.message || String(e));
+    } finally {
+      setGeneratingContent(false);
     }
   };
 
@@ -771,15 +947,32 @@ export default function ResourceDetail() {
           </div>
           <div className="flex gap-2 shrink-0">
             {images.length > 0 && (
-              <button
-                type="button"
-                onClick={runVisionAnalyze}
-                disabled={visionRunning || visionApplying}
-                className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
-                title="Use Claude vision to suggest title, content narrative, themes, scripture, and tone based on the image(s)"
-              >
-                {visionRunning ? 'Analyzing…' : '✨ Analyze with Claude'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={runGenerateContent}
+                  disabled={
+                    generatingContent || visionRunning || visionApplying
+                  }
+                  className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                  title="Use Claude vision to fill the Content field — transcribes visible text or describes the scene with a homiletical hook. Replaces existing Content; edit before Save."
+                >
+                  {generatingContent
+                    ? 'Generating…'
+                    : '✨ Generate content from images'}
+                </button>
+                <button
+                  type="button"
+                  onClick={runVisionAnalyze}
+                  disabled={
+                    visionRunning || visionApplying || generatingContent
+                  }
+                  className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                  title="Use Claude vision to suggest title, content narrative, themes, scripture, and tone based on the image(s)"
+                >
+                  {visionRunning ? 'Analyzing…' : '✨ Analyze with Claude'}
+                </button>
+              </>
             )}
             <label
               className={`btn-secondary text-sm cursor-pointer whitespace-nowrap ${
@@ -912,8 +1105,23 @@ export default function ResourceDetail() {
                 </a>
                 <button
                   type="button"
+                  onClick={() => handleRotateImage(img)}
+                  disabled={
+                    rotatingImageId === img.id ||
+                    removingImageId === img.id
+                  }
+                  className="absolute top-1 left-1 px-2 py-0.5 text-xs bg-white/90 hover:bg-white text-gray-700 hover:text-gray-900 rounded shadow disabled:opacity-50"
+                  title="Rotate this image 90° clockwise"
+                >
+                  {rotatingImageId === img.id ? '…' : '↻'}
+                </button>
+                <button
+                  type="button"
                   onClick={() => handleImageRemove(img)}
-                  disabled={removingImageId === img.id}
+                  disabled={
+                    removingImageId === img.id ||
+                    rotatingImageId === img.id
+                  }
                   className="absolute top-1 right-1 px-2 py-0.5 text-xs bg-white/90 hover:bg-white text-red-600 hover:text-red-800 rounded shadow disabled:opacity-50"
                   title="Remove this image"
                 >
@@ -1039,4 +1247,63 @@ function SuggestionRow({
       )}
     </div>
   );
+}
+
+// Decode a Blob, rotate the bitmap 90 degrees clockwise, re-encode as
+// JPEG. Used by the per-image Rotate button.
+async function rotateImageBlob90CW(blob) {
+  // Prefer createImageBitmap for broad codec support, fall back to <img>.
+  let bitmap;
+  if (typeof createImageBitmap === 'function') {
+    try {
+      bitmap = await createImageBitmap(blob);
+    } catch {
+      bitmap = null;
+    }
+  }
+  if (!bitmap) {
+    bitmap = await new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(blob);
+      const img = new Image();
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        resolve(img);
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Browser couldn't decode the image for rotation."));
+      };
+      img.src = url;
+    });
+  }
+  const sw = bitmap.width || bitmap.naturalWidth || 0;
+  const sh = bitmap.height || bitmap.naturalHeight || 0;
+  if (!sw || !sh) {
+    throw new Error('Decoded image has zero dimensions; cannot rotate.');
+  }
+  // 90° CW: source (w, h) becomes destination (h, w).
+  const canvas = document.createElement('canvas');
+  canvas.width = sh;
+  canvas.height = sw;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(sh, 0);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(bitmap, 0, 0, sw, sh);
+  if (typeof bitmap.close === 'function') {
+    try {
+      bitmap.close();
+    } catch {
+      /* noop */
+    }
+  }
+  return await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (b) =>
+        b
+          ? resolve(b)
+          : reject(new Error('Canvas toBlob returned null — out of memory?')),
+      'image/jpeg',
+      0.88
+    );
+  });
 }

@@ -463,6 +463,134 @@ export async function analyzeResourceWithImages({ images, existing = {} }) {
 }
 
 /**
+ * Narrow image-to-content helper: ask Claude vision for ONLY the
+ * Content text of a resource, not the broader metadata bundle.
+ *
+ * Use case: the pastor took a photo of something they want to remember
+ * — a quote on a wall, a passage in a book, a signboard, a scene — and
+ * wants the resource's Content field populated with whatever is most
+ * useful (verbatim text if there is text, otherwise a description with
+ * a homiletical angle).
+ *
+ * Mirrors analyzeResourceWithImages' image-prep pipeline (fetch →
+ * downscale → JPEG → base64) but returns just a string. The caller
+ * drops it straight into the Content textarea; the pastor edits before
+ * saving like the analyze flow.
+ *
+ * @param {Object} input
+ * @param {Array<{image_path:string, caption?:string}>} input.images
+ * @param {Object} [input.existing]   - same shape as analyzeResourceWithImages
+ * @returns {Promise<string>}
+ */
+export async function generateContentFromImages({ images, existing = {} }) {
+  if (!Array.isArray(images) || images.length === 0) {
+    throw new Error('No images attached to generate content from.');
+  }
+  const subset = images.slice(0, 4);
+
+  const prepared = await Promise.all(
+    subset.map(async (img) => {
+      const url = publicResourceImageUrl(img.image_path);
+      const res = await withTimeout(fetch(url), 30000);
+      if (!res.ok) throw new Error(`Couldn't fetch image (${res.status})`);
+      const blob = await res.blob();
+      const { blob: jpeg, mediaType } = await prepareImageForUpload(
+        blob,
+        1600,
+        0.85
+      );
+      const data = await blobToBase64(jpeg);
+      return { mediaType, data, caption: img.caption };
+    })
+  );
+
+  const system = [
+    'You help a United Methodist pastor catalog visual resources for',
+    "their sermon-prep library.",
+    '',
+    'You will receive one or more images. Produce the BODY TEXT for',
+    "this resource's Content field. Your output goes directly into the",
+    'Content textbox; the pastor will edit before saving.',
+    '',
+    'Decision tree:',
+    '- If the image contains substantial readable text (a quote, a',
+    '  page from a book, a passage on a screen, a signboard with a',
+    '  full message), transcribe that text verbatim, preserving line',
+    '  breaks where they matter. Put any attribution on its own line',
+    '  at the end (e.g. "— C.S. Lewis, Mere Christianity, p. 42").',
+    '- If the image is primarily a scene / photograph / artwork with',
+    '  no transcribable text, describe what is shown in 2-4 sentences,',
+    '  THEN add a short paragraph (2-3 sentences) on the homiletical',
+    '  hook — how this could be used in preaching.',
+    '- If the image is BOTH (text + significant visual context),',
+    '  transcribe the text first, then add a brief note about the',
+    '  visual context that frames it.',
+    '',
+    'Plain text only. No markdown, no JSON, no code fences.',
+    'No preamble like "Here is the content:" — just the content itself.',
+  ].join('\n');
+
+  const ctxLines = [];
+  if (existing.title) ctxLines.push(`Title (for context): ${existing.title}`);
+  if (existing.content && existing.content.trim()) {
+    ctxLines.push(
+      `Existing Content (you will be REPLACING this — feel free to use it as a hint):\n${existing.content}`
+    );
+  }
+  if (existing.source) ctxLines.push(`Source: ${existing.source}`);
+  if (existing.resource_type)
+    ctxLines.push(`Resource type: ${existing.resource_type}`);
+  const ctxBlock =
+    ctxLines.length > 0
+      ? `Context (what the user has filled in so far):\n${ctxLines.join('\n')}\n\n`
+      : '';
+
+  const contentBlocks = [
+    {
+      type: 'text',
+      text:
+        ctxBlock +
+        `Here ${subset.length === 1 ? 'is the image' : `are ${subset.length} images`} attached to this resource:`,
+    },
+  ];
+  for (let i = 0; i < prepared.length; i++) {
+    const p = prepared[i];
+    if (p.caption) {
+      contentBlocks.push({
+        type: 'text',
+        text: `Image ${i + 1} caption: ${p.caption}`,
+      });
+    }
+    contentBlocks.push({
+      type: 'image',
+      source: {
+        type: 'base64',
+        media_type: p.mediaType,
+        data: p.data,
+      },
+    });
+  }
+  contentBlocks.push({
+    type: 'text',
+    text: 'Now produce the Content text for this resource.',
+  });
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: contentBlocks }],
+      max_tokens: 2000,
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(response).trim();
+  if (!text) {
+    throw new Error('Claude returned no content text.');
+  }
+  return text;
+}
+
+/**
  * Extract reusable resources (stories / quotes / illustrations / jokes)
  * from a sermon manuscript. Returns Claude's proposed list — the UI is
  * responsible for letting the pastor edit/accept/reject before saving.
