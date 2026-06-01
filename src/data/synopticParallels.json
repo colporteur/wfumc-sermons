@@ -1,0 +1,1055 @@
+[
+  {
+    "no": 1,
+    "section": "1. Preface",
+    "pericope": "Prologue",
+    "matthew": "1:1",
+    "mark": "1:1",
+    "luke": "1:1-4",
+    "john": "1:1-18"
+  },
+  {
+    "no": 6,
+    "section": "2. Birth and Childhood",
+    "pericope": "The Genealogy of Jesus",
+    "matthew": "1:2-17",
+    "mark": null,
+    "luke": "3:23-38",
+    "john": null
+  },
+  {
+    "no": 7,
+    "section": "2. Birth and Childhood",
+    "pericope": "The Birth of Jesus",
+    "matthew": "1:18-25",
+    "mark": null,
+    "luke": "2:1-7",
+    "john": null
+  },
+  {
+    "no": 8,
+    "section": "2. Birth and Childhood",
+    "pericope": "The Adoration of the Infant Jesus",
+    "matthew": "2:1-12",
+    "mark": null,
+    "luke": "2:8-20",
+    "john": null
+  },
+  {
+    "no": 11,
+    "section": "2. Birth and Childhood",
+    "pericope": "The Childhood of Jesus at Nazareth",
+    "matthew": "2:22-23",
+    "mark": null,
+    "luke": "2:39-40",
+    "john": null
+  },
+  {
+    "no": 13,
+    "section": "3. Preparation",
+    "pericope": "John the Baptist",
+    "matthew": "3:1-6",
+    "mark": "1:2-6",
+    "luke": "3:1-6",
+    "john": "1:19-23"
+  },
+  {
+    "no": 14,
+    "section": "3. Preparation",
+    "pericope": "John's Preaching of Repentance",
+    "matthew": "3:7-10",
+    "mark": null,
+    "luke": "3:7-9",
+    "john": null
+  },
+  {
+    "no": 16,
+    "section": "3. Preparation",
+    "pericope": "John's Messianic Preaching",
+    "matthew": "3:11-12",
+    "mark": "1:7-8",
+    "luke": "3:15-18",
+    "john": "1:24-28"
+  },
+  {
+    "no": 17,
+    "section": "3. Preparation",
+    "pericope": "The Imprisonment of John",
+    "matthew": "14:3-4",
+    "mark": "6:17-18",
+    "luke": "3:19-20",
+    "john": null
+  },
+  {
+    "no": 18,
+    "section": "3. Preparation",
+    "pericope": "The Baptism of Jesus",
+    "matthew": "3:13-17",
+    "mark": "1:9-11",
+    "luke": "3:21-22",
+    "john": "1:29-34"
+  },
+  {
+    "no": 19,
+    "section": "3. Preparation",
+    "pericope": "The Genealogy of Jesus",
+    "matthew": "1:1-17",
+    "mark": null,
+    "luke": "3:23-38",
+    "john": null
+  },
+  {
+    "no": 20,
+    "section": "3. Preparation",
+    "pericope": "The Temptation",
+    "matthew": "4:1-11",
+    "mark": "1:12-13",
+    "luke": "4:1-13",
+    "john": null
+  },
+  {
+    "no": 25,
+    "section": "4. The Beginning of Jesus' Public Ministry (According to John)",
+    "pericope": "The Cleansing of the Temple",
+    "matthew": "21:12-13",
+    "mark": "11:15-17",
+    "luke": "19:45-46",
+    "john": "2:14-22"
+  },
+  {
+    "no": 30,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Journey into Galilee",
+    "matthew": "4:12",
+    "mark": "1:14",
+    "luke": "4:14",
+    "john": "4:1-3"
+  },
+  {
+    "no": 32,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Ministry in Galilee",
+    "matthew": "4:13-17",
+    "mark": "1:14-15",
+    "luke": "4:14-15",
+    "john": "4:43-46"
+  },
+  {
+    "no": 33,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Jesus' Preaching at Nazareth",
+    "matthew": "13:53-58",
+    "mark": "6:1-6",
+    "luke": "4:16-30",
+    "john": null
+  },
+  {
+    "no": 34,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Call of the Disciples",
+    "matthew": "4:18-22",
+    "mark": "1:16-20",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 35,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Teaching in the Synagogue at Capernaum",
+    "matthew": null,
+    "mark": "1:21-22",
+    "luke": "4:31-32",
+    "john": null
+  },
+  {
+    "no": 36,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Healing of the Demoniac in the Synagogue",
+    "matthew": null,
+    "mark": "1:23-28",
+    "luke": "4:33-37",
+    "john": null
+  },
+  {
+    "no": 37,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Healing of Peter's Mother-in-law",
+    "matthew": "8:14-15",
+    "mark": "1:29-31",
+    "luke": "4:38-39",
+    "john": null
+  },
+  {
+    "no": 38,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Sick Healed at Evening",
+    "matthew": "8:16-17",
+    "mark": "1:32-34",
+    "luke": "4:40-41",
+    "john": null
+  },
+  {
+    "no": 39,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Jesus Departs from Capernaurn",
+    "matthew": null,
+    "mark": "1:35-38",
+    "luke": "4:42-43",
+    "john": null
+  },
+  {
+    "no": 40,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "First Preaching Tour in Galilee",
+    "matthew": "4:23",
+    "mark": "1:39",
+    "luke": "4:44",
+    "john": null
+  },
+  {
+    "no": 42,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Cleansing of the Leper",
+    "matthew": "8:1-4",
+    "mark": "1:40-45",
+    "luke": "5:12-16",
+    "john": null
+  },
+  {
+    "no": 43,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Healing of the Paralytic",
+    "matthew": "9:1-8",
+    "mark": "2:1-12",
+    "luke": "5:17-26",
+    "john": "5:8-9"
+  },
+  {
+    "no": 44,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Call of Levi (Matthew)",
+    "matthew": "9:9-13",
+    "mark": "2:13-17",
+    "luke": "5:27-32",
+    "john": null
+  },
+  {
+    "no": 45,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Question about Fasting",
+    "matthew": "9:14-17",
+    "mark": "2:18-22",
+    "luke": "5:33-39",
+    "john": null
+  },
+  {
+    "no": 46,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Plucking Grain on the Sabbath",
+    "matthew": "12:1-8",
+    "mark": "2:23-28",
+    "luke": "6:1-5",
+    "john": null
+  },
+  {
+    "no": 47,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Man with the Withered Hand",
+    "matthew": "12:9-14",
+    "mark": "3:1-6",
+    "luke": "6:6-11",
+    "john": null
+  },
+  {
+    "no": 48,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "Jesus Heals Multitudes by the Sea",
+    "matthew": "4:24-25; 12:15-16",
+    "mark": "3:7-12",
+    "luke": "6:17-19",
+    "john": null
+  },
+  {
+    "no": 49,
+    "section": "5. Jesus' Ministry in Galilee",
+    "pericope": "The Choosing of the Twelve",
+    "matthew": "10:1-4",
+    "mark": "3:13-19",
+    "luke": "6:12-16",
+    "john": null
+  },
+  {
+    "no": 50,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "Occasion of the Sermon",
+    "matthew": "4:24-5:2",
+    "mark": "3:7-13",
+    "luke": "6:17-20",
+    "john": null
+  },
+  {
+    "no": 51,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Beatitudes",
+    "matthew": "5:3-12",
+    "mark": null,
+    "luke": "6:20-23",
+    "john": null
+  },
+  {
+    "no": 52,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Salt of the Earth",
+    "matthew": "5:13",
+    "mark": "9:49-50",
+    "luke": "14:34-35",
+    "john": null
+  },
+  {
+    "no": 53,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Light of the World",
+    "matthew": "5:14-16",
+    "mark": "4:21",
+    "luke": "8:16",
+    "john": null
+  },
+  {
+    "no": 54,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On the Law and the Prophets",
+    "matthew": "5:17-20",
+    "mark": null,
+    "luke": "16:16-17",
+    "john": null
+  },
+  {
+    "no": 55,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Murder and Wrath",
+    "matthew": "5:21-26",
+    "mark": null,
+    "luke": "12:57-59",
+    "john": null
+  },
+  {
+    "no": 56,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Adultery and Divorce",
+    "matthew": "5:27-32",
+    "mark": "9:43-48",
+    "luke": "16:18",
+    "john": null
+  },
+  {
+    "no": 58,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Retaliation",
+    "matthew": "5:38-42",
+    "mark": null,
+    "luke": "6:29-30",
+    "john": null
+  },
+  {
+    "no": 59,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Love of One's Enemies",
+    "matthew": "5:43-48",
+    "mark": null,
+    "luke": "6:27-28; 6:32-36",
+    "john": null
+  },
+  {
+    "no": 62,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Lord's Prayer",
+    "matthew": "6:7-15",
+    "mark": "11:25",
+    "luke": "11:1-4",
+    "john": null
+  },
+  {
+    "no": 64,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Treasures",
+    "matthew": "6:19-21",
+    "mark": null,
+    "luke": "12:33-34",
+    "john": null
+  },
+  {
+    "no": 65,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Sound Eye",
+    "matthew": "6:22-23",
+    "mark": null,
+    "luke": "11:34-36",
+    "john": null
+  },
+  {
+    "no": 66,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Serving Two Masters",
+    "matthew": "6:24",
+    "mark": null,
+    "luke": "16:13",
+    "john": null
+  },
+  {
+    "no": 67,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Anxiety",
+    "matthew": "6:25-34",
+    "mark": null,
+    "luke": "12:22-32",
+    "john": null
+  },
+  {
+    "no": 68,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "On Judging",
+    "matthew": "7:1-5",
+    "mark": "4:24-25",
+    "luke": "6:37-42",
+    "john": null
+  },
+  {
+    "no": 70,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "God's Answering of Prayer",
+    "matthew": "7:7-11",
+    "mark": null,
+    "luke": "11:9-13",
+    "john": null
+  },
+  {
+    "no": 71,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Golden Rule",
+    "matthew": "7:12",
+    "mark": null,
+    "luke": "6:31",
+    "john": null
+  },
+  {
+    "no": 72,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Two Ways",
+    "matthew": "7:13-14",
+    "mark": null,
+    "luke": "13:23-24",
+    "john": null
+  },
+  {
+    "no": 73,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "\"By their Fruits\"",
+    "matthew": "7:15-20; 12:33-35",
+    "mark": null,
+    "luke": "6:43-45",
+    "john": null
+  },
+  {
+    "no": 74,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "\"Saying Lord, Lord\"",
+    "matthew": "7:21-23",
+    "mark": null,
+    "luke": "6:46; 13:25-27",
+    "john": null
+  },
+  {
+    "no": 75,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The House Built upon the Rock",
+    "matthew": "7:24-27",
+    "mark": null,
+    "luke": "6:47-49",
+    "john": null
+  },
+  {
+    "no": 76,
+    "section": "6. The Sermon on the Mount (According to Matthew)",
+    "pericope": "The Effect of the Sermon",
+    "matthew": "7:28-29",
+    "mark": "1:21-22",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 77,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "Occasion of the Sermon",
+    "matthew": "4:24-5:2",
+    "mark": "3:7-13",
+    "luke": "6:17-20",
+    "john": null
+  },
+  {
+    "no": 78,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "The Beatitudes",
+    "matthew": "5:3-12",
+    "mark": null,
+    "luke": "6:20-23",
+    "john": null
+  },
+  {
+    "no": 80,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "On Love of One's Enemies",
+    "matthew": "5:38-48",
+    "mark": null,
+    "luke": "6:27-36",
+    "john": null
+  },
+  {
+    "no": 81,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "On Judging",
+    "matthew": "7:1-5",
+    "mark": "4:24-25",
+    "luke": "6:37-42",
+    "john": null
+  },
+  {
+    "no": 82,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "\"By their Fruits\"",
+    "matthew": "7:15-20; 12:33-35",
+    "mark": null,
+    "luke": "6:43-45",
+    "john": null
+  },
+  {
+    "no": 83,
+    "section": "7. The Sermon on the Plain (According to Luke)",
+    "pericope": "The House Built upon the Rock",
+    "matthew": "7:21-27",
+    "mark": null,
+    "luke": "6:46-49",
+    "john": null
+  },
+  {
+    "no": 84,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Cleansing of the Leper",
+    "matthew": "8:1-4",
+    "mark": "1:40-45",
+    "luke": "5:12-16",
+    "john": null
+  },
+  {
+    "no": 85,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Centurion of Capernaum",
+    "matthew": "8:5-13",
+    "mark": "7:30",
+    "luke": "7:1-10; 13:28-29",
+    "john": "4:46-54"
+  },
+  {
+    "no": 87,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Healing of Peter's Mother-in-law",
+    "matthew": "8:14-15",
+    "mark": "1:29-31",
+    "luke": "4:38-39",
+    "john": null
+  },
+  {
+    "no": 88,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Sick Healed at Evening",
+    "matthew": "8:16-17",
+    "mark": "1:32-34",
+    "luke": "4:40-41",
+    "john": null
+  },
+  {
+    "no": 89,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "On Following Jesus",
+    "matthew": "8:18-22",
+    "mark": null,
+    "luke": "9:57-62",
+    "john": null
+  },
+  {
+    "no": 90,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Stilling the Storm",
+    "matthew": "8:23-27",
+    "mark": "4:35-41",
+    "luke": "8:22-25",
+    "john": null
+  },
+  {
+    "no": 91,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Gadarene Demoniacs",
+    "matthew": "8:28-34",
+    "mark": "5:1-20",
+    "luke": "8:26-39",
+    "john": null
+  },
+  {
+    "no": 92,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Healing of the Paralytic",
+    "matthew": "9:1-8",
+    "mark": "2:1-12",
+    "luke": "5:17-26",
+    "john": "5:8-9"
+  },
+  {
+    "no": 93,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Call of Levi (Matthew)",
+    "matthew": "9:9-13",
+    "mark": "2:13-17",
+    "luke": "5:27-32",
+    "john": null
+  },
+  {
+    "no": 94,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Question about Fasting",
+    "matthew": "9:14-17",
+    "mark": "2:18-22",
+    "luke": "5:33-39",
+    "john": null
+  },
+  {
+    "no": 95,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jairus' Daughter and the Woman with a Hemorrhage",
+    "matthew": "9:18-26",
+    "mark": "5:21-43",
+    "luke": "8:40-56",
+    "john": null
+  },
+  {
+    "no": 96,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Two Blind Men",
+    "matthew": "9:27-31; 20:29-34",
+    "mark": "10:46-52",
+    "luke": "18:35-43",
+    "john": null
+  },
+  {
+    "no": 97,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Dumb Demoniac",
+    "matthew": "9:32-34; 12:22-24",
+    "mark": "3:22",
+    "luke": "11:14-15",
+    "john": null
+  },
+  {
+    "no": 98,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Harvest is Great",
+    "matthew": "9:35-38",
+    "mark": "6:6; 6:34",
+    "luke": "8:1; 10:2",
+    "john": null
+  },
+  {
+    "no": 99,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Commissioning the Twelve",
+    "matthew": "10:1-16",
+    "mark": "6:7; 3:13-19; 6:8-11",
+    "luke": "9:1; 6:12-16; 9:2-5; 10:3",
+    "john": null
+  },
+  {
+    "no": 100,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Fate of the Disciples",
+    "matthew": "10:17-25; 24:9-14",
+    "mark": "13:9-13",
+    "luke": "12:11-12; 6:40; 21:12-19",
+    "john": "13:16"
+  },
+  {
+    "no": 101,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Exhortation to Fearless Confession",
+    "matthew": "10:26-33",
+    "mark": null,
+    "luke": "12:2-9",
+    "john": null
+  },
+  {
+    "no": 102,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Divisions within Households",
+    "matthew": "10:34-36",
+    "mark": null,
+    "luke": "12:51-53",
+    "john": null
+  },
+  {
+    "no": 103,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Conditions of Discipleship",
+    "matthew": "10:37-39",
+    "mark": null,
+    "luke": "14:25-27; 17:33",
+    "john": "12:25"
+  },
+  {
+    "no": 104,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Rewards of Discipleship",
+    "matthew": "10:40-42",
+    "mark": "9:41",
+    "luke": "10:16",
+    "john": "13:20"
+  },
+  {
+    "no": 106,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "John the Baptist's Question and Jesus' Answer",
+    "matthew": "11:2-6",
+    "mark": null,
+    "luke": "7:18-23",
+    "john": null
+  },
+  {
+    "no": 107,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus' Witness concerning John",
+    "matthew": "11:7-19",
+    "mark": null,
+    "luke": "7:24-35; 16:16",
+    "john": null
+  },
+  {
+    "no": 108,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Woes Pronounced on Galilean Cities",
+    "matthew": "11:20-24",
+    "mark": null,
+    "luke": "10:12-15",
+    "john": null
+  },
+  {
+    "no": 109,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus' Thanksgiving to the Father",
+    "matthew": "11:25-27",
+    "mark": null,
+    "luke": "10:21-22",
+    "john": null
+  },
+  {
+    "no": 111,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Plucking Grain on the Sabbath",
+    "matthew": "12:1-8",
+    "mark": "2:23-28",
+    "luke": "6:1-5",
+    "john": null
+  },
+  {
+    "no": 112,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Healing the Withered Hand",
+    "matthew": "12:9-14",
+    "mark": "3:1-6",
+    "luke": "6:6-11",
+    "john": null
+  },
+  {
+    "no": 113,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus Heals Multitudes by the Sea",
+    "matthew": "12:15-21",
+    "mark": "3:7-12",
+    "luke": "6:17-19",
+    "john": null
+  },
+  {
+    "no": 114,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Woman with the Ointment",
+    "matthew": "26:6-13",
+    "mark": "14:3-9",
+    "luke": "7:36-50",
+    "john": "12:1-8"
+  },
+  {
+    "no": 117,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "On Collusion with Satan",
+    "matthew": "12:22-30; 9:32-34",
+    "mark": "3:22-27",
+    "luke": "11:14-15; 11:17-23",
+    "john": null
+  },
+  {
+    "no": 118,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Sin against the Holy Spirit",
+    "matthew": "12:31-37; 7:16-20",
+    "mark": "3:28-30",
+    "luke": "12:10; 6:43-45",
+    "john": null
+  },
+  {
+    "no": 119,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Sign of Jonah",
+    "matthew": "12:38-42; 16:1-2,4",
+    "mark": "8:11-12",
+    "luke": "11:16; 11:29-32",
+    "john": null
+  },
+  {
+    "no": 120,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Return of the Evil Spirit",
+    "matthew": "12:43-45",
+    "mark": null,
+    "luke": "11:24-26",
+    "john": null
+  },
+  {
+    "no": 121,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus' True Kindred",
+    "matthew": "12:46-50",
+    "mark": "3:31-35",
+    "luke": "8:19-21",
+    "john": "15:14"
+  },
+  {
+    "no": 122,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Parable of the Sower",
+    "matthew": "13:1-9",
+    "mark": "4:1-9",
+    "luke": "8:4-8",
+    "john": null
+  },
+  {
+    "no": 123,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Reason for Speaking in Parables",
+    "matthew": "13:10-17",
+    "mark": "4:10-12; 4:25",
+    "luke": "8:9-10; 8:18; 10:23-24",
+    "john": null
+  },
+  {
+    "no": 124,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Interpretation of the Parable of the Sower",
+    "matthew": "13:18-23",
+    "mark": "4:13-20",
+    "luke": "8:11-15",
+    "john": null
+  },
+  {
+    "no": 125,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "\"He who has Ears to Hear, Let him Hear\"",
+    "matthew": "5:15; 10:26; 7:2; 13:12",
+    "mark": "4:21-25",
+    "luke": "8:16-18",
+    "john": null
+  },
+  {
+    "no": 128,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Parable of the Mustard Seed",
+    "matthew": "13:31-32",
+    "mark": "4:30-32",
+    "luke": "13:18-19",
+    "john": null
+  },
+  {
+    "no": 129,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Parable of the Leaven",
+    "matthew": "13:33",
+    "mark": null,
+    "luke": "13:20-21",
+    "john": null
+  },
+  {
+    "no": 130,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus' Use of Parables",
+    "matthew": "13:34-35",
+    "mark": "4:33-34",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 135,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus' True Kindred",
+    "matthew": "12:46-50",
+    "mark": "3:31-35",
+    "luke": "8:19-21",
+    "john": "15:14"
+  },
+  {
+    "no": 136,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Stilling the Storm",
+    "matthew": "8:23-27",
+    "mark": "4:35-41",
+    "luke": "8:22-25",
+    "john": null
+  },
+  {
+    "no": 137,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Gerasene Demoniac",
+    "matthew": "8:28-34",
+    "mark": "5:1-20",
+    "luke": "8:26-39",
+    "john": null
+  },
+  {
+    "no": 138,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jairus' Daughter and the Woman with a Hemorrhage",
+    "matthew": "9:18-26",
+    "mark": "5:21-43",
+    "luke": "8:40-56",
+    "john": null
+  },
+  {
+    "no": 139,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus is Rejected at Nazareth",
+    "matthew": "13:53-58",
+    "mark": "6:1-6",
+    "luke": "4:16-30",
+    "john": null
+  },
+  {
+    "no": 142,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Commissioning the Twelve",
+    "matthew": "9:35; 10:1,7-11,14",
+    "mark": "6:6-13",
+    "luke": "9:1-6",
+    "john": null
+  },
+  {
+    "no": 143,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Opinions regarding Jesus",
+    "matthew": "14:1-2",
+    "mark": "6:14-16",
+    "luke": "9:7-9",
+    "john": null
+  },
+  {
+    "no": 144,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Death of John the Baptist",
+    "matthew": "14:3-12",
+    "mark": "6:17-29",
+    "luke": "3:19-20",
+    "john": null
+  },
+  {
+    "no": 145,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Return of the Apostles",
+    "matthew": null,
+    "mark": "6:30-31",
+    "luke": "9:10",
+    "john": null
+  },
+  {
+    "no": 146,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Five Thousand are Fed",
+    "matthew": "14:13-21",
+    "mark": "6:32-44",
+    "luke": "9.; 10-17",
+    "john": "6:1-15"
+  },
+  {
+    "no": 147,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Walking on the Water",
+    "matthew": "14:22-33",
+    "mark": "6:45-52",
+    "luke": null,
+    "john": "6:16-21"
+  },
+  {
+    "no": 148,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Healings at Gennesaret",
+    "matthew": "14:34-36",
+    "mark": "6:53-56",
+    "luke": null,
+    "john": "6:22-25"
+  },
+  {
+    "no": 150,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Defilement - Traditional and Real",
+    "matthew": "15:1-20",
+    "mark": "7:1-23",
+    "luke": "11:37-41; 6:39",
+    "john": null
+  },
+  {
+    "no": 151,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Syrophoenician (Canaanite) Woman",
+    "matthew": "15:21-28",
+    "mark": "7:24-30",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 152,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Jesus Heals a Deaf Mute and Many Others",
+    "matthew": "15:29-31",
+    "mark": "7:31-37",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 153,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "Four Thousand are Fed",
+    "matthew": "15:32-39",
+    "mark": "8:1-10",
+    "luke": null,
+    "john": null
+  },
+  {
+    "no": 154,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Pharisees Seek a Sign",
+    "matthew": "16:1-4; 12:38-39",
+    "mark": "8:11-13",
+    "luke": "11:16; 12:54-56; 11:29",
+    "john": null
+  },
+  {
+    "no": 155,
+    "section": "8. Jesus' Ministry in Galilee Continued",
+    "pericope": "The Leaven of the Pharisees",
+    "matthew": "16:5-12",
+    "mark": "8:14-21",
+    "luke": "12:1",
+    "john": null
+  }
+]

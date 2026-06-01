@@ -19,6 +19,7 @@ import {
   suggestThemesFromScripture,
 } from '../lib/claude';
 import {
+  expandWithSynopticParallels,
   formatRange,
   parseScriptureRanges,
   rangesOverlap,
@@ -29,7 +30,8 @@ export default function FindResourcesByScripture({
   scriptureRef,
   themes,
   semantic,
-  onChange, // ({ scriptureRef, themes, semantic, matchedIdsByMode }) => void
+  synopticParallels,
+  onChange, // ({ scriptureRef, themes, semantic, synopticParallels, matched }) => void
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -51,16 +53,20 @@ export default function FindResourcesByScripture({
   // --- compute matches ---------------------------------------------
 
   const computeMatches = useCallback(
-    async ({ ref, themesList, useSemantic }) => {
+    async ({ ref, themesList, useSemantic, useSynopticParallels }) => {
       // Maps so each row can show WHAT matched, not just IF it matched.
-      //   byScripture: id → string[]  (e.g. ["Matt 9:18-22"])
+      //   byScripture: id → string[]  (e.g. ["Matt 9:18-22", "Mark 5:25 (parallel of Matt 9:18-26)"])
       //   byThemes:    id → string[]  (resource themes that matched)
       const out = { byScripture: new Map(), byThemes: new Map() };
 
-      // Channel 1: verse overlap. Collect every overlapping range so a
-      // resource tagged with multiple passages shows all the hits.
+      // Channel 1: verse overlap. Optionally expand targets with
+      // synoptic parallels so a Matt search also matches Mark/Luke
+      // parallels.
       if (ref && ref.trim()) {
-        const targets = parseScriptureRanges(ref);
+        let targets = parseScriptureRanges(ref);
+        if (useSynopticParallels) {
+          targets = expandWithSynopticParallels(targets);
+        }
         if (targets.length > 0) {
           for (const r of resources) {
             if (!r.scripture_refs) continue;
@@ -69,13 +75,18 @@ export default function FindResourcesByScripture({
             for (const rr of rRanges) {
               for (const tr of targets) {
                 if (rangesOverlap(rr, tr)) {
-                  hits.push(formatRange(rr));
+                  // If this match came via a synoptic parallel, surface
+                  // that in the display so the pastor can see why an
+                  // unexpected gospel showed up.
+                  const label = tr.parallelOf
+                    ? `${formatRange(rr)} (parallel of ${tr.parallelOf})`
+                    : formatRange(rr);
+                  hits.push(label);
                   break; // count each rr at most once
                 }
               }
             }
             if (hits.length > 0) {
-              // Dedupe and trim runaway lists for display.
               const uniq = Array.from(new Set(hits)).slice(0, 5);
               out.byScripture.set(r.id, uniq);
             }
@@ -123,7 +134,8 @@ export default function FindResourcesByScripture({
   const runSearch = async (
     nextRef = scriptureRef,
     nextThemes = themes,
-    nextSemantic = semantic
+    nextSemantic = semantic,
+    nextParallels = synopticParallels
   ) => {
     setBusy(true);
     setError(null);
@@ -132,11 +144,13 @@ export default function FindResourcesByScripture({
         ref: nextRef,
         themesList: nextThemes,
         useSemantic: nextSemantic,
+        useSynopticParallels: nextParallels,
       });
       onChange({
         scriptureRef: nextRef,
         themes: nextThemes,
         semantic: nextSemantic,
+        synopticParallels: nextParallels,
         matched,
       });
     } catch (e) {
@@ -160,6 +174,7 @@ export default function FindResourcesByScripture({
         scriptureRef,
         themes: proposed,
         semantic,
+        synopticParallels,
         matched: null, // don't auto-run search; let pastor edit themes first
       });
     } catch (e) {
@@ -180,6 +195,7 @@ export default function FindResourcesByScripture({
       scriptureRef,
       themes: [...themes, t],
       semantic,
+      synopticParallels,
       matched: null,
     });
     setThemeInput('');
@@ -190,6 +206,7 @@ export default function FindResourcesByScripture({
       scriptureRef,
       themes: themes.filter((x) => x !== t),
       semantic,
+      synopticParallels,
       matched: null,
     });
   };
@@ -199,6 +216,7 @@ export default function FindResourcesByScripture({
       scriptureRef: '',
       themes: [],
       semantic: false,
+      synopticParallels: false,
       matched: { byScripture: new Map(), byThemes: new Map() },
     });
   };
@@ -240,6 +258,7 @@ export default function FindResourcesByScripture({
                 scriptureRef: e.target.value,
                 themes,
                 semantic,
+                synopticParallels,
                 matched: null,
               })
             }
@@ -328,12 +347,33 @@ export default function FindResourcesByScripture({
                 scriptureRef,
                 themes,
                 semantic: e.target.checked,
+                synopticParallels,
                 matched: null,
               })
             }
             disabled={busy}
           />
-          Semantic match (synonyms + closely-related themes)
+          Semantic theme match
+        </label>
+        <label
+          className="inline-flex items-center gap-2 text-sm text-gray-700"
+          title="When searching a Gospel passage, also match resources tagged with the parallel passage(s) in Matthew, Mark, Luke, and John (per Aland's synopsis)."
+        >
+          <input
+            type="checkbox"
+            checked={synopticParallels}
+            onChange={(e) =>
+              onChange({
+                scriptureRef,
+                themes,
+                semantic,
+                synopticParallels: e.target.checked,
+                matched: null,
+              })
+            }
+            disabled={busy}
+          />
+          Match synoptic parallels
         </label>
         <div className="flex-1" />
         <button

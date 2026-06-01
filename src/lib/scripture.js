@@ -1,3 +1,5 @@
+import SYNOPTIC_PARALLELS from '../data/synopticParallels.json';
+
 // Helpers for parsing scripture references like "John 3:16-21" or
 // "1 Corinthians 13:1-13; Mark 12:28-34" into the book name(s).
 //
@@ -445,4 +447,116 @@ export function formatRange(r) {
     return `${r.book} ${r.chapter}:${r.startVerse}-end`;
   }
   return `${r.book} ${r.chapter}:${r.startVerse}-${r.endVerse}`;
+}
+
+// =====================================================================
+// Synoptic parallels
+//
+// Backed by /src/data/synopticParallels.json — parsed from the Aland
+// synopsis table on bible-researcher.com. Each pericope lists the
+// passage in each gospel it appears in (Matthew, Mark, Luke, John,
+// any of which may be null).
+//
+// expandWithSynopticParallels takes a target range array (as produced
+// by parseScriptureRanges) and returns a new array that ALSO contains
+// the parallel passages from the other gospels for every pericope any
+// input range overlaps.
+//
+// Use case: pastor searches "Matt 9:9-13" with the synoptic-parallels
+// box ticked. We look up pericope 44 (Call of Levi), and add Mark
+// 2:13-17 + Luke 5:27-32 to the target set. The downstream overlap
+// loop then matches resources tagged with any of those three.
+// =====================================================================
+
+// Map gospel key → canonical BIBLE_BOOKS name. Lets us reuse rangesOverlap.
+const GOSPEL_KEY_TO_BOOK = {
+  matthew: 'Matthew',
+  mark: 'Mark',
+  luke: 'Luke',
+  john: 'John',
+};
+
+// Pre-parse each pericope's gospel references once at module load. The
+// chart has ~117 entries × up to 4 gospels — a few hundred range parses
+// total. Worth caching since every search re-uses them.
+const PERICOPE_RANGES = (() => {
+  const out = [];
+  for (const p of SYNOPTIC_PARALLELS) {
+    const byGospel = {};
+    for (const [key, book] of Object.entries(GOSPEL_KEY_TO_BOOK)) {
+      const ref = p[key];
+      if (!ref) continue;
+      // The data file stores bare chapter:verse strings (e.g. "9:9-13").
+      // Reconstitute with the gospel name so parseScriptureRanges can
+      // handle the book lookup.
+      const ranges = parseScriptureRanges(`${book} ${ref}`);
+      if (ranges.length > 0) byGospel[key] = ranges;
+    }
+    out.push({
+      no: p.no,
+      pericope: p.pericope,
+      byGospel,
+    });
+  }
+  return out;
+})();
+
+/**
+ * For every input range, find pericopes it overlaps and add the OTHER
+ * gospels' ranges to the result. The original input ranges are always
+ * preserved. Each added range carries `.parallelOf` = formatted source
+ * range so the UI can explain *why* it was added.
+ *
+ * Returns a new array — does not mutate the input.
+ */
+export function expandWithSynopticParallels(inputRanges) {
+  if (!Array.isArray(inputRanges) || inputRanges.length === 0) {
+    return inputRanges || [];
+  }
+  // Dedupe by range identity so a pericope that gets matched twice
+  // (e.g. by overlapping ranges in the user's input) doesn't double up.
+  const out = [...inputRanges];
+  const seen = new Set(out.map(rangeKey));
+
+  for (const pericope of PERICOPE_RANGES) {
+    // Which input range(s) triggered this pericope (if any)?
+    const triggers = [];
+    for (const [gKey, ranges] of Object.entries(pericope.byGospel)) {
+      const book = GOSPEL_KEY_TO_BOOK[gKey];
+      for (const ir of inputRanges) {
+        if (ir.book !== book) continue;
+        for (const pr of ranges) {
+          if (rangesOverlap(ir, pr)) {
+            triggers.push(ir);
+            break;
+          }
+        }
+        if (triggers.length > 0 && triggers[triggers.length - 1] === ir) break;
+      }
+    }
+    if (triggers.length === 0) continue;
+
+    // Add every OTHER gospel's ranges. Tag each with parallelOf info.
+    const triggerLabel = triggers.map(formatRange).join(', ');
+    for (const [gKey, ranges] of Object.entries(pericope.byGospel)) {
+      const book = GOSPEL_KEY_TO_BOOK[gKey];
+      // Skip the gospel(s) the trigger already covered.
+      if (triggers.some((t) => t.book === book)) continue;
+      for (const r of ranges) {
+        const key = rangeKey(r);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          ...r,
+          parallelOf: triggerLabel,
+          parallelPericope: pericope.pericope,
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function rangeKey(r) {
+  return `${r.book}|${r.chapter ?? '*'}|${r.startVerse}|${r.endVerse}`;
 }

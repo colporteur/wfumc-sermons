@@ -118,6 +118,7 @@ export default function ResourceList() {
     return raw ? raw.split('|').filter(Boolean) : [];
   }, [searchParams]);
   const findSemantic = searchParams.get('findSemantic') === '1';
+  const findParallels = searchParams.get('findParallels') === '1';
   // Matched results from the most recent FindResourcesByScripture
   // search. null = no search active; { byScripture, byThemes } where
   // both are Map<id, string[]> when a search has run. Empty Maps mean
@@ -590,14 +591,16 @@ export default function ResourceList() {
         scriptureRef={findScripture}
         themes={findThemes}
         semantic={findSemantic}
+        synopticParallels={findParallels}
         onChange={({
           scriptureRef: nextRef,
           themes: nextThemes,
           semantic: nextSemantic,
+          synopticParallels: nextParallels,
           matched,
         }) => {
-          // Persist scripture/themes/semantic to URL so the search
-          // round-trips across reloads + browser back-button.
+          // Persist scripture/themes/semantic/parallels to URL so the
+          // search round-trips across reloads + browser back-button.
           const next = new URLSearchParams(searchParams);
           if (nextRef) next.set('findScripture', nextRef);
           else next.delete('findScripture');
@@ -608,6 +611,8 @@ export default function ResourceList() {
           }
           if (nextSemantic) next.set('findSemantic', '1');
           else next.delete('findSemantic');
+          if (nextParallels) next.set('findParallels', '1');
+          else next.delete('findParallels');
           setSearchParams(next, { replace: true });
           // Only update matched-ids when computeMatches actually ran;
           // an edit of inputs without re-search clears the result so
