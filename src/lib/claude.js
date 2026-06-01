@@ -1801,6 +1801,129 @@ export async function suggestSlidesForManuscript({
  * @param {string} reference - e.g. "John 3:16-21", "Acts 17:32-34"
  * @returns {Promise<string>} the verse text, ready to drop into a slide body.
  */
+/**
+ * Given a scripture reference, ask Claude for 5–8 short theme tags
+ * the passage opens up. Used by the Resources page's
+ * "Find by scripture" search.
+ *
+ * Returns an array of lowercase tag strings, e.g.
+ *   ["mercy not sacrifice", "calling the outsider", "faith and healing", ...]
+ *
+ * @param {string} reference - e.g. "Matthew 9:9-13, 18-26"
+ * @returns {Promise<string[]>}
+ */
+export async function suggestThemesFromScripture(reference) {
+  const ref = (reference || '').trim();
+  if (!ref) throw new Error('No scripture reference provided.');
+  const result = await callClaude(
+    {
+      system: [
+        'You are helping a United Methodist pastor (RCL-aware) find sermon-prep',
+        'resources by theme. Given a scripture reference, propose 5-8 short',
+        'theme tags that the passage opens up homiletically.',
+        '',
+        'Each tag should be:',
+        '- a short noun phrase (2-5 words) the pastor might have tagged a',
+        '  story, quote, or illustration with',
+        '- lowercase',
+        '- specific enough to filter on (prefer "calling the outsider" over',
+        '  "calling"; prefer "mercy not sacrifice" over "mercy")',
+        '',
+        'Return ONLY a JSON array of strings. No prose, no markdown, no fences.',
+      ].join('\n'),
+      messages: [
+        { role: 'user', content: `Reference: ${ref}` },
+      ],
+      max_tokens: 1000,
+    },
+    { timeoutMs: 60000 }
+  );
+  const text = extractText(result);
+  const arr = parseJsonArrayLoose(text);
+  if (!Array.isArray(arr)) {
+    throw new Error("Claude did not return a parseable list of themes.");
+  }
+  return arr
+    .map((s) => (typeof s === 'string' ? s.trim().toLowerCase() : ''))
+    .filter(Boolean);
+}
+
+/**
+ * Semantic theme match: given the target themes the pastor cares about
+ * (typically the output of suggestThemesFromScripture, possibly edited),
+ * and the deduped list of theme strings ACTUALLY USED in the pastor's
+ * resource library, return the subset of library themes that
+ * semantically relate to at least one target.
+ *
+ * One Claude call per search regardless of library size. Costs grow
+ * with `candidateThemes.length`, not with resource count.
+ *
+ * Returns an array of strings (a subset of candidateThemes).
+ */
+export async function findSemanticallyMatchingThemes(
+  targetThemes,
+  candidateThemes
+) {
+  const targets = (Array.isArray(targetThemes) ? targetThemes : [])
+    .map((s) => String(s || '').trim().toLowerCase())
+    .filter(Boolean);
+  const candidates = (Array.isArray(candidateThemes) ? candidateThemes : [])
+    .map((s) => String(s || '').trim())
+    .filter(Boolean);
+  if (targets.length === 0 || candidates.length === 0) return [];
+
+  const result = await callClaude(
+    {
+      system: [
+        'You are helping a pastor search their sermon-prep library by theme.',
+        '',
+        'Given a set of TARGET themes (what the pastor wants resources about)',
+        'and a set of CANDIDATE themes (the actual theme tags used across the',
+        'pastor\'s existing resources), return the subset of CANDIDATE themes',
+        'that semantically relate to AT LEAST ONE target theme.',
+        '',
+        'Semantic relatedness includes:',
+        '- synonyms ("forgiveness" ↔ "pardon")',
+        '- specific instances of a general theme ("tax collectors" relates to',
+        '  "outsiders welcomed")',
+        '- closely-related concepts ("healing" relates to "faith and healing")',
+        '- the same biblical/theological move under different wording',
+        '',
+        'Do NOT match candidates that are merely tangentially adjacent.',
+        '',
+        'Return ONLY a JSON array of strings drawn VERBATIM from the CANDIDATE',
+        'list (no new themes, no rewording, no prose, no fences).',
+      ].join('\n'),
+      messages: [
+        {
+          role: 'user',
+          content:
+            `TARGET themes:\n${JSON.stringify(targets)}\n\n` +
+            `CANDIDATE themes:\n${JSON.stringify(candidates)}`,
+        },
+      ],
+      max_tokens: 2000,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(result);
+  const arr = parseJsonArrayLoose(text);
+  if (!Array.isArray(arr)) return [];
+  // Defensive: keep only candidates Claude actually returned that exist
+  // in the original list (case-insensitive match), preserving the
+  // original casing.
+  const candidateSet = new Map(
+    candidates.map((c) => [c.toLowerCase(), c])
+  );
+  const out = new Set();
+  for (const r of arr) {
+    if (typeof r !== 'string') continue;
+    const original = candidateSet.get(r.trim().toLowerCase());
+    if (original) out.add(original);
+  }
+  return Array.from(out);
+}
+
 export async function lookupScriptureNRSVUe(reference) {
   const ref = (reference || '').trim();
   if (!ref) throw new Error('No scripture reference provided.');

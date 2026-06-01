@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Save resource — WFUMC</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main id="root">
+      <header class="header">
+        <h1>Save to WFUMC Resources</h1>
+        <p id="status" class="status"></p>
+      </header>
+
+      <div id="error" class="error" hidden></div>
+
+      <section id="image-preview" class="image-preview" hidden>
+        <img id="image-preview-img" alt="Captured image preview" />
+        <div class="image-meta" id="image-meta"></div>
+      </section>
+
+      <form id="resource-form">
+        <label class="field">
+          <span class="label">Type</span>
+          <select id="resource_type" name="resource_type">
+            <option value="story">Story</option>
+            <option value="quote">Quote</option>
+            <option value="illustration">Illustration</option>
+            <option value="joke">Joke</option>
+            <option value="note">Note</option>
+            <option value="photo">Photo</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="label">Library</span>
+          <select id="library_id" name="library_id">
+            <option value="">— Personal (no library) —</option>
+          </select>
+        </label>
+
+        <label class="field">
+          <span class="label">Title</span>
+          <input type="text" id="title" name="title" placeholder="Short, searchable" />
+        </label>
+
+        <label class="field">
+          <span class="label">Content</span>
+          <textarea id="content" name="content" rows="6" placeholder="The body of the resource"></textarea>
+        </label>
+
+        <label class="field">
+          <span class="label">Source</span>
+          <input type="text" id="source" name="source" placeholder="Author, book, podcast, etc." />
+        </label>
+
+        <label class="field">
+          <span class="label">Source URL</span>
+          <input type="url" id="source_url" name="source_url" />
+        </label>
+
+        <label class="field">
+          <span class="label">Themes (comma-separated)</span>
+          <input type="text" id="themes" name="themes" placeholder="grace, forgiveness" />
+        </label>
+
+        <label class="field">
+          <span class="label">Scripture connections</span>
+          <input
+            type="text"
+            id="scripture_refs"
+            name="scripture_refs"
+            placeholder="Mark 12:28-34; Romans 13:8"
+          />
+        </label>
+
+        <label class="field">
+          <span class="label">Tone</span>
+          <input type="text" id="tone" name="tone" placeholder="hopeful, somber, humorous…" />
+        </label>
+
+        <label class="field">
+          <span class="label">Private notes</span>
+          <textarea id="notes" name="notes" rows="2" placeholder="Where this might land in a sermon"></textarea>
+        </label>
+
+        <div class="actions">
+          <button type="button" id="analyze-btn" class="btn btn-secondary">
+            ✨ Analyze with Claude
+          </button>
+          <div class="actions-right">
+            <button type="button" id="cancel-btn" class="btn btn-ghost">Cancel</button>
+            <button type="submit" id="save-btn" class="btn btn-primary">Save resource</button>
+          </div>
+        </div>
+
+        <p id="settings-link" class="footer">
+          <a href="#" id="open-settings">Open settings</a>
+        </p>
+      </form>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

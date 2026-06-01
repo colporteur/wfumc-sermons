@@ -11,6 +11,7 @@ import {
   analyzeResource,
   analyzeResourceWithImages,
 } from '../lib/claude';
+import FindResourcesByScripture from '../components/FindResourcesByScripture.jsx';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -106,6 +107,21 @@ export default function ResourceList() {
   );
   // Selection state for bulk actions (move-to-library, bulk analyze)
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+
+  // "Find by scripture & themes" state — kept in component state (not
+  // URL) because the matched-ids set isn't worth serializing and the
+  // input fields are quick to re-fill if you reload. Themes ARE
+  // serialized so a focused search you want to keep is bookmarkable.
+  const findScripture = searchParams.get('findScripture') ?? '';
+  const findThemes = useMemo(() => {
+    const raw = searchParams.get('findThemes') ?? '';
+    return raw ? raw.split('|').filter(Boolean) : [];
+  }, [searchParams]);
+  const findSemantic = searchParams.get('findSemantic') === '1';
+  // matched-ids set from the most recent FindResourcesByScripture
+  // search. null = no search active; Set = active result. Empty set
+  // means searched but nothing matched (different from null).
+  const [scriptureThemeMatches, setScriptureThemeMatches] = useState(null);
   const [bulkLibraryId, setBulkLibraryId] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkError, setBulkError] = useState(null);
@@ -428,6 +444,16 @@ export default function ResourceList() {
     const bookQ = filters.book.trim();
     const toneQ = filters.tone.trim().toLowerCase();
     let out = resources.filter((r) => {
+      // Scripture/theme search constraint: if a search is active,
+      // restrict to the union of its scripture + theme matches. The
+      // existing filter row still narrows further.
+      if (scriptureThemeMatches) {
+        const union = new Set([
+          ...scriptureThemeMatches.byScripture,
+          ...scriptureThemeMatches.byThemes,
+        ]);
+        if (!union.has(r.id)) return false;
+      }
       if (filters.type !== 'any' && r.resource_type !== filters.type) return false;
       if (filters.library === 'personal' && r.library_id) return false;
       if (
@@ -487,7 +513,7 @@ export default function ResourceList() {
       }
     });
     return out;
-  }, [resources, filters]);
+  }, [resources, filters, booksByResource, scriptureThemeMatches]);
 
   if (loading) return <LoadingSpinner label="Loading resources…" />;
 
@@ -535,6 +561,57 @@ export default function ResourceList() {
       {error && (
         <div className="card border-red-200 bg-red-50">
           <p className="text-sm text-red-700">{error}</p>
+        </div>
+      )}
+
+      {/* Find by scripture & themes */}
+      <FindResourcesByScripture
+        resources={resources}
+        scriptureRef={findScripture}
+        themes={findThemes}
+        semantic={findSemantic}
+        onChange={({
+          scriptureRef: nextRef,
+          themes: nextThemes,
+          semantic: nextSemantic,
+          matched,
+        }) => {
+          // Persist scripture/themes/semantic to URL so the search
+          // round-trips across reloads + browser back-button.
+          const next = new URLSearchParams(searchParams);
+          if (nextRef) next.set('findScripture', nextRef);
+          else next.delete('findScripture');
+          if (nextThemes && nextThemes.length > 0) {
+            next.set('findThemes', nextThemes.join('|'));
+          } else {
+            next.delete('findThemes');
+          }
+          if (nextSemantic) next.set('findSemantic', '1');
+          else next.delete('findSemantic');
+          setSearchParams(next, { replace: true });
+          // Only update matched-ids when computeMatches actually ran;
+          // an edit of inputs without re-search clears the result so
+          // the count banner doesn't lie.
+          setScriptureThemeMatches(matched ?? null);
+        }}
+      />
+
+      {scriptureThemeMatches && (
+        <div className="card border-umc-200 bg-umc-50 text-sm">
+          {(() => {
+            const byS = scriptureThemeMatches.byScripture;
+            const byT = scriptureThemeMatches.byThemes;
+            const union = new Set([...byS, ...byT]);
+            const both = [...byS].filter((id) => byT.has(id)).length;
+            return (
+              <p className="text-umc-900">
+                Showing {union.size} match{union.size === 1 ? '' : 'es'}:{' '}
+                <strong>{byS.size}</strong> by scripture overlap,{' '}
+                <strong>{byT.size}</strong> by themes
+                {both > 0 && <> ({both} by both)</>}.
+              </p>
+            );
+          })()}
         </div>
       )}
 
@@ -733,6 +810,22 @@ export default function ResourceList() {
                           <h2 className="font-serif text-lg text-umc-900 truncate">
                             {r.title}
                           </h2>
+                        )}
+                        {scriptureThemeMatches?.byScripture.has(r.id) && (
+                          <span
+                            className="px-1.5 py-0.5 text-[10px] rounded bg-blue-100 text-blue-800"
+                            title="Matched by verse overlap with your scripture reference"
+                          >
+                            scripture
+                          </span>
+                        )}
+                        {scriptureThemeMatches?.byThemes.has(r.id) && (
+                          <span
+                            className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800"
+                            title="Matched by theme (semantic match)"
+                          >
+                            themes
+                          </span>
                         )}
                         {lib ? (
                           <span className="text-[10px] uppercase tracking-wide text-gray-500">

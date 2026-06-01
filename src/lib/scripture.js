@@ -30,10 +30,15 @@ export const BIBLE_BOOKS = [
   'Revelation',
 ];
 
-// Common abbreviations and Roman-numeral variants that the spreadsheet
-// uses. Keys are lowercased; values are the canonical book name.
+// Common abbreviations and Roman-numeral variants that show up in the
+// pastor's existing data (resources imported from spreadsheets, ENEX
+// notes, etc.) Keys are lowercased; values are the canonical book name.
+//
+// Used both for parsing references AND for collapsing the Book of Bible
+// dropdown filter so that "Matt" and "Matthew" don't appear as separate
+// entries.
 const BOOK_ALIASES = {
-  // Roman numerals → arabic
+  // --- Roman numerals → arabic --------------------------------------
   'i samuel': '1 Samuel', 'ii samuel': '2 Samuel',
   'i kings': '1 Kings', 'ii kings': '2 Kings',
   'i chronicles': '1 Chronicles', 'ii chronicles': '2 Chronicles',
@@ -42,10 +47,80 @@ const BOOK_ALIASES = {
   'i timothy': '1 Timothy', 'ii timothy': '2 Timothy',
   'i peter': '1 Peter', 'ii peter': '2 Peter',
   'i john': '1 John', 'ii john': '2 John', 'iii john': '3 John',
-  // Common short forms
-  'psalm': 'Psalms', 'song of songs': 'Song of Solomon',
+
+  // --- Old Testament abbreviations ----------------------------------
+  'gen': 'Genesis', 'gn': 'Genesis',
+  'exo': 'Exodus', 'exod': 'Exodus', 'ex': 'Exodus',
+  'lev': 'Leviticus', 'lv': 'Leviticus',
+  'num': 'Numbers', 'nm': 'Numbers', 'nu': 'Numbers',
+  'deut': 'Deuteronomy', 'dt': 'Deuteronomy', 'deu': 'Deuteronomy',
+  'josh': 'Joshua', 'jos': 'Joshua',
+  'judg': 'Judges', 'jdg': 'Judges', 'jgs': 'Judges',
+  'ru': 'Ruth', 'rth': 'Ruth',
+  '1 sam': '1 Samuel', '1sam': '1 Samuel', '1 sm': '1 Samuel',
+  '2 sam': '2 Samuel', '2sam': '2 Samuel', '2 sm': '2 Samuel',
+  '1 kg': '1 Kings', '1 kgs': '1 Kings', '1kgs': '1 Kings', '1 kin': '1 Kings',
+  '2 kg': '2 Kings', '2 kgs': '2 Kings', '2kgs': '2 Kings', '2 kin': '2 Kings',
+  '1 chr': '1 Chronicles', '1 chron': '1 Chronicles', '1chr': '1 Chronicles',
+  '2 chr': '2 Chronicles', '2 chron': '2 Chronicles', '2chr': '2 Chronicles',
+  'ezr': 'Ezra',
+  'neh': 'Nehemiah',
+  'est': 'Esther', 'esth': 'Esther',
+  'jb': 'Job',
+  'psalm': 'Psalms', 'ps': 'Psalms', 'psa': 'Psalms', 'psm': 'Psalms',
+  'pss': 'Psalms', 'pslm': 'Psalms',
+  'pr': 'Proverbs', 'prov': 'Proverbs', 'prv': 'Proverbs', 'prvb': 'Proverbs',
+  'eccl': 'Ecclesiastes', 'ec': 'Ecclesiastes', 'eccle': 'Ecclesiastes',
+  'qoh': 'Ecclesiastes', 'qoheleth': 'Ecclesiastes',
+  'song': 'Song of Solomon', 'song of songs': 'Song of Solomon',
+  'sos': 'Song of Solomon', 'sg': 'Song of Solomon',
   'canticles': 'Song of Solomon',
-  'rev': 'Revelation', 'revelations': 'Revelation',
+  'isa': 'Isaiah', 'is': 'Isaiah',
+  'jer': 'Jeremiah', 'jr': 'Jeremiah',
+  'lam': 'Lamentations',
+  'ezek': 'Ezekiel', 'eze': 'Ezekiel', 'ezk': 'Ezekiel',
+  'dan': 'Daniel', 'dn': 'Daniel',
+  'hos': 'Hosea',
+  'jl': 'Joel',
+  'am': 'Amos',
+  'ob': 'Obadiah', 'obad': 'Obadiah',
+  'jon': 'Jonah', 'jnh': 'Jonah',
+  'mic': 'Micah', 'mi': 'Micah',
+  'nah': 'Nahum', 'na': 'Nahum',
+  'hab': 'Habakkuk',
+  'zeph': 'Zephaniah', 'zep': 'Zephaniah',
+  'hag': 'Haggai',
+  'zech': 'Zechariah', 'zec': 'Zechariah',
+  'mal': 'Malachi',
+
+  // --- New Testament abbreviations ----------------------------------
+  'matt': 'Matthew', 'mt': 'Matthew',
+  'mk': 'Mark', 'mar': 'Mark', 'mrk': 'Mark',
+  'lk': 'Luke', 'luk': 'Luke',
+  'jn': 'John', 'jhn': 'John',
+  'ac': 'Acts',
+  'rom': 'Romans', 'rm': 'Romans', 'ro': 'Romans',
+  '1 cor': '1 Corinthians', '1 co': '1 Corinthians', '1cor': '1 Corinthians',
+  '2 cor': '2 Corinthians', '2 co': '2 Corinthians', '2cor': '2 Corinthians',
+  'gal': 'Galatians',
+  'eph': 'Ephesians',
+  'phil': 'Philippians', 'php': 'Philippians', 'phl': 'Philippians',
+  'col': 'Colossians',
+  '1 thess': '1 Thessalonians', '1 thes': '1 Thessalonians', '1 th': '1 Thessalonians',
+  '2 thess': '2 Thessalonians', '2 thes': '2 Thessalonians', '2 th': '2 Thessalonians',
+  '1 tim': '1 Timothy', '1 tm': '1 Timothy',
+  '2 tim': '2 Timothy', '2 tm': '2 Timothy',
+  'tit': 'Titus',
+  'phlm': 'Philemon', 'phm': 'Philemon',
+  'heb': 'Hebrews',
+  'jas': 'James', 'jms': 'James', 'jm': 'James',
+  '1 pet': '1 Peter', '1 pt': '1 Peter',
+  '2 pet': '2 Peter', '2 pt': '2 Peter',
+  '1 jn': '1 John', '1 jhn': '1 John',
+  '2 jn': '2 John', '2 jhn': '2 John',
+  '3 jn': '3 John', '3 jhn': '3 John',
+  'jud': 'Jude', 'jd': 'Jude',
+  'rev': 'Revelation', 'revelations': 'Revelation', 'rv': 'Revelation',
 };
 
 const LOWER_BOOK_LOOKUP = (() => {
