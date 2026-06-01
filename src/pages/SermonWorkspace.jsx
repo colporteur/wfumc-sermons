@@ -17,6 +17,7 @@ import WorkspaceDiffModal from '../components/WorkspaceDiffModal.jsx';
 import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
+import WorkspaceExtractResources from '../components/WorkspaceExtractResources.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import ManuscriptEditor, {
   ParagraphNumberToggle,
@@ -140,6 +141,10 @@ export default function SermonWorkspace() {
   // Explore modal: when a resource is opened for "Explore", we stash
   // the initial resource(s) here. The modal handles its own pairing.
   const [exploreInitialResources, setExploreInitialResources] = useState([]);
+  // Modal: ✨ Extract resources from a source (PDF / URL / paste).
+  // Mirrors /resources/extract but lives inside the workspace and lets
+  // the pastor route each extracted row to this sermon vs archive-only.
+  const [extractOpen, setExtractOpen] = useState(false);
   const exploreOpen = exploreInitialResources.length > 0;
 
   // Composer state
@@ -791,6 +796,14 @@ export default function SermonWorkspace() {
           >
             🖼️ Slide Deck
           </Link>
+          <button
+            type="button"
+            onClick={() => setExtractOpen(true)}
+            className="btn-secondary text-xs whitespace-nowrap"
+            title="Extract reusable resources from a PDF, URL, or pasted text — route each one to this sermon or just to your archive."
+          >
+            ✨ Extract resources
+          </button>
           {isLocked ? (
             <>
               <span className="text-umc-700 font-medium">
@@ -1042,6 +1055,37 @@ export default function SermonWorkspace() {
           handleSendInstruction(instruction, resources);
         }}
       />
+
+      {extractOpen && (
+        <WorkspaceExtractResources
+          sermon={sermon}
+          ownerUserId={user?.id}
+          onClose={() => setExtractOpen(false)}
+          onCommitted={({ created, attached }) => {
+            // Surface the result as a quiet chat note so the pastor sees
+            // confirmation in the chat panel even after closing the modal.
+            if (created > 0) {
+              const noteParts = [
+                `Saved ${created} resource${created === 1 ? '' : 's'} to your library`,
+              ];
+              if (attached > 0) {
+                noteParts.push(
+                  `attached ${attached} to this sermon's Resources Used list`
+                );
+              }
+              setMessages((prev) => [
+                ...prev,
+                {
+                  role: 'assistant',
+                  kind: 'note',
+                  content: noteParts.join('; ') + '.',
+                  ts: Date.now(),
+                },
+              ]);
+            }
+          }}
+        />
+      )}
 
       <WorkspaceDiffModal
         open={diffForIndex !== null}

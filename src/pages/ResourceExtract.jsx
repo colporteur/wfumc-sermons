@@ -4,6 +4,7 @@ import { supabase, withTimeout } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import { extractResourcesFromSource } from '../lib/claude';
 import { extractPdfText } from '../lib/pdfText';
+import { parsePageRangeSpec, formatPageRange } from '../lib/pageRange';
 import { fetchUrlText } from '../lib/urlFetch';
 import { listMyLibraries } from '../lib/libraries';
 
@@ -22,7 +23,7 @@ const MODE_OPTIONS = [
   { value: 'pdf', label: 'Upload .pdf' },
 ];
 
-const TYPE_OPTIONS = ['story', 'quote', 'illustration', 'joke'];
+const TYPE_OPTIONS = ['story', 'quote', 'illustration', 'joke', 'exegesis'];
 
 export default function ResourceExtract() {
   const { user } = useAuth();
@@ -44,6 +45,9 @@ export default function ResourceExtract() {
   // Saved into resources.source_url on import (URL mode only).
   const [fetchedUrl, setFetchedUrl] = useState('');
   const fileRef = useRef(null);
+  // Optional page-range filter for PDF mode. Empty = all pages.
+  // Format like "4-17, 22, 30-35". Parsed when a file is picked.
+  const [pageRangeSpec, setPageRangeSpec] = useState('');
 
   // Review state
   const [proposals, setProposals] = useState([]); // [{ checked, ...resource }]
@@ -96,15 +100,33 @@ export default function ResourceExtract() {
         );
       } else if (mode === 'pdf') {
         setParseStatus('Reading the PDF…');
-        const { text, pageCount } = await extractPdfText(file);
+        // Parse the optional page-range filter. parsePageRangeSpec
+        // throws on malformed input — let that bubble up to the
+        // catch block as the visible error so the pastor can fix it.
+        let pageFilter = null;
+        try {
+          pageFilter = parsePageRangeSpec(pageRangeSpec);
+        } catch (parseErr) {
+          throw new Error(`Page range: ${parseErr.message}`);
+        }
+        const { text, pageCount, pagesExtracted } = await extractPdfText(
+          file,
+          pageFilter ? { pages: pageFilter } : undefined
+        );
         if (!text.trim()) {
           throw new Error(
-            "Couldn't pull any text out of that PDF. It might be image-only (scanned) — try OCR first."
+            pageFilter
+              ? "Couldn't pull any text out of the selected pages. Check the page range, or try without one."
+              : "Couldn't pull any text out of that PDF. It might be image-only (scanned) — try OCR first."
           );
         }
         setParsedText(text);
+        const sliceLabel =
+          pageFilter && pagesExtracted.length < pageCount
+            ? ` (pages ${formatPageRange(new Set(pagesExtracted))} of ${pageCount})`
+            : ` (${pageCount}-page PDF)`;
         setParseStatus(
-          `Loaded ${text.length.toLocaleString()} characters from ${pageCount}-page PDF (${file.name}).`
+          `Loaded ${text.length.toLocaleString()} characters from ${file.name}${sliceLabel}.`
         );
       }
     } catch (err) {
@@ -449,6 +471,28 @@ export default function ResourceExtract() {
 
           {(mode === 'txt' || mode === 'pdf') && (
             <>
+              {mode === 'pdf' && (
+                <div>
+                  <label className="label">
+                    Pages{' '}
+                    <span className="text-gray-500 font-normal">
+                      (optional — leave blank for all pages)
+                    </span>
+                  </label>
+                  <input
+                    type="text"
+                    value={pageRangeSpec}
+                    onChange={(e) => setPageRangeSpec(e.target.value)}
+                    placeholder='e.g. "4-17" or "4-17, 22, 30-35"'
+                    className="input text-sm"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Limits Claude to specific pages — useful when only one
+                    chapter of a commentary is relevant. Single ranges
+                    ("4-17") or comma-separated mixes ("4-17, 22, 30-35").
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="label">
                   Upload {mode === 'pdf' ? '.pdf' : '.txt'} file
@@ -467,7 +511,8 @@ export default function ResourceExtract() {
               {mode === 'pdf' && (
                 <p className="text-xs text-gray-500">
                   Big PDF? <Link to="/resources/pdf-split" className="text-umc-700 underline">Split it first</Link>{' '}
-                  into smaller chunks for easier extraction.
+                  into smaller chunks for easier extraction, or use the
+                  Pages field above to limit Claude to a section.
                 </p>
               )}
               {parsedText && (

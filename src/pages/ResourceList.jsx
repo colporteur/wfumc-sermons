@@ -27,6 +27,7 @@ const TYPE_OPTIONS = [
   { value: 'joke', label: 'Jokes' },
   { value: 'note', label: 'Notes' },
   { value: 'photo', label: 'Photos' },
+  { value: 'exegesis', label: 'Exegesis' },
 ];
 
 const TYPE_BADGE = {
@@ -36,6 +37,7 @@ const TYPE_BADGE = {
   joke: { label: 'Joke', cls: 'bg-green-100 text-green-800' },
   note: { label: 'Note', cls: 'bg-gray-200 text-gray-700' },
   photo: { label: 'Photo', cls: 'bg-pink-100 text-pink-800' },
+  exegesis: { label: 'Exegesis', cls: 'bg-cyan-100 text-cyan-800' },
 };
 
 

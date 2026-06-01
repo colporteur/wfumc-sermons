@@ -258,7 +258,7 @@ export async function analyzeResource({ content, type, title, source }) {
 
   const system = [
     'You help a United Methodist pastor catalog sermon-prep resources',
-    '(stories, quotes, illustrations, jokes, notes) by suggesting metadata.',
+    '(stories, quotes, illustrations, jokes, notes, exegesis) by suggesting metadata.',
     '',
     'Return ONLY a JSON object with three keys:',
     '  themes:         array of 3-6 short theme tags (e.g., "grace", "forgiveness", "stewardship", "holy week")',
@@ -724,12 +724,11 @@ export async function extractResourcesFromSource({
 
   const system = [
     'You help a United Methodist pastor mine reading material — articles,',
-    'book chapters, blog posts, talks they listened to — for reusable',
-    'sermon-illustration resources. Identify discrete stories, quotes,',
-    'illustrations, and jokes that could stand alone and might land in',
-    'a future sermon.',
+    'book chapters, commentaries, blog posts, talks — for reusable',
+    'sermon-prep resources. Identify discrete artifacts that could stand',
+    'alone and might land in a future sermon or sermon-prep notes.',
     '',
-    'Be CONSERVATIVE — only extract concrete artifacts that work standalone.',
+    'Be CONSERVATIVE — only extract concrete, standalone artifacts.',
     '',
     'DO extract:',
     '  - Personal anecdotes or stories (the author\'s own or someone else\'s)',
@@ -737,26 +736,38 @@ export async function extractResourcesFromSource({
     '  - Illustrations: metaphors, analogies, parable-style teaching images',
     '  - Jokes',
     '  - Concrete examples drawn from history, news, science, literature',
+    '  - EXEGESIS: substantive biblical commentary / interpretation /',
+    '    scholarship on a specific passage. This is the type to use when',
+    '    the source is a Bible commentary or scholarly article: capture',
+    '    each discrete insight about a passage (translation notes,',
+    '    historical context, structural observations, theological',
+    '    interpretation tied to a verse). Each insight gets its own row,',
+    '    not the whole commentary dumped as one. ALWAYS populate',
+    '    scripture_refs precisely for exegesis (down to verse).',
     '',
     'DO NOT extract:',
-    '  - The author\'s argument, theological reflection, or doctrinal exposition',
-    '  - Exegesis or interpretation of a Bible passage',
+    '  - The author\'s general theological reflection not tied to a passage',
     '  - Transitions, framing language, throat-clearing',
-    '  - General observations that aren\'t tied to a concrete story, quote, or image',
+    '  - General observations that aren\'t a story, quote, image, or',
+    '    passage-anchored exegesis',
     '',
-    'Rule of thumb: if the passage primarily REFLECTS or TEACHES, skip it.',
-    'If it primarily TELLS, QUOTES, or PAINTS A PICTURE, extract it.',
+    'Rule of thumb: if the passage primarily REFLECTS in the abstract,',
+    'skip it. If it TELLS, QUOTES, PAINTS A PICTURE, or interprets a',
+    'SPECIFIC scripture, extract it.',
     '',
     'For each extracted item, return an object with these keys:',
     '  proposed_title: a short title for the resource (5-10 words)',
     '  content:        the actual excerpt, copied verbatim from the source',
     '                  with light cleanup (fix obvious OCR/typo issues, drop',
     '                  filler). Multiple paragraphs are fine. Don\'t paraphrase.',
-    '  type:           one of "story", "quote", "illustration", "joke"',
+    '  type:           one of "story", "quote", "illustration", "joke", "exegesis"',
     '  themes:         array of 3-5 short lowercase theme tags',
-    '  scripture_refs: relevant Bible refs the resource might illustrate,',
-    '                  semicolon-separated, or "" if none come to mind',
-    '  tone:           one short descriptor (humorous, tender, convicting, etc.)',
+    '  scripture_refs: relevant Bible refs the resource illustrates or',
+    '                  interprets, semicolon-separated. REQUIRED for exegesis;',
+    '                  empty string is acceptable for story/quote/illustration/joke',
+    '                  when none come to mind.',
+    '  tone:           one short descriptor (humorous, tender, convicting,',
+    '                  scholarly, technical, etc.)',
     '',
     'When suggesting scripture refs, prefer Revised Common Lectionary',
     'passages (Years A/B/C) when they fit. The pastor preaches RCL.',
@@ -788,7 +799,15 @@ export async function extractResourcesFromSource({
     throw new Error("Couldn't parse Claude's response as a JSON array.");
   }
 
-  const VALID_TYPES = new Set(['story', 'quote', 'illustration', 'joke']);
+  // extractResourcesFromSource accepts 'exegesis' too — commentaries
+  // and scholarly articles are a primary source for this path.
+  const VALID_TYPES = new Set([
+    'story',
+    'quote',
+    'illustration',
+    'joke',
+    'exegesis',
+  ]);
   return parsed
     .filter((r) => r && typeof r === 'object')
     .map((r) => ({

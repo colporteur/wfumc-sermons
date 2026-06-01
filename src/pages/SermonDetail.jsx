@@ -1035,6 +1035,8 @@ function SermonResourcesCard({
     illustration: { label: 'Illustration', cls: 'bg-amber-100 text-amber-800' },
     joke: { label: 'Joke', cls: 'bg-green-100 text-green-800' },
     note: { label: 'Note', cls: 'bg-gray-200 text-gray-700' },
+    photo: { label: 'Photo', cls: 'bg-pink-100 text-pink-800' },
+    exegesis: { label: 'Exegesis', cls: 'bg-cyan-100 text-cyan-800' },
   };
 
   return (

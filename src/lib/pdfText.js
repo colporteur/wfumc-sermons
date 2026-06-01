@@ -27,12 +27,23 @@ async function getPdfjs() {
 }
 
 /**
- * Extract text from a PDF Blob/File.
+ * Extract text from a PDF Blob/File. Optionally limit to a specific
+ * subset of pages (1-indexed) — useful when the pastor only wants the
+ * relevant section of a long commentary, not the whole book.
  *
  * @param {Blob|File} blob
- * @returns {Promise<{text: string, pageCount: number}>}
+ * @param {Object} [opts]
+ * @param {Set<number>} [opts.pages] - 1-indexed pages to include. When
+ *   omitted, every page is extracted. Page numbers outside [1, pageCount]
+ *   are silently skipped. The returned `text` only contains the included
+ *   pages, joined with blank lines in document order.
+ * @returns {Promise<{
+ *   text: string,
+ *   pageCount: number,
+ *   pagesExtracted: number[],
+ * }>}
  */
-export async function extractPdfText(blob) {
+export async function extractPdfText(blob, { pages } = {}) {
   let pdfjs;
   try {
     pdfjs = await getPdfjs();
@@ -43,9 +54,13 @@ export async function extractPdfText(blob) {
   }
   const arrayBuffer = await blob.arrayBuffer();
   const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
+  const total = doc.numPages;
+  const filter = pages instanceof Set ? pages : null;
 
   const pageTexts = [];
-  for (let p = 1; p <= doc.numPages; p++) {
+  const pagesExtracted = [];
+  for (let p = 1; p <= total; p++) {
+    if (filter && !filter.has(p)) continue;
     const page = await doc.getPage(p);
     const content = await page.getTextContent();
     // Each "item" is a positioned text run. Join with space, then collapse.
@@ -55,8 +70,9 @@ export async function extractPdfText(blob) {
       .replace(/[ \t]+/g, ' ')
       .trim();
     pageTexts.push(pageText);
+    pagesExtracted.push(p);
   }
 
   const text = pageTexts.join('\n\n').trim();
-  return { text, pageCount: doc.numPages };
+  return { text, pageCount: total, pagesExtracted };
 }

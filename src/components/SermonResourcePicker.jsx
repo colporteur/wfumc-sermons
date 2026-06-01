@@ -25,6 +25,7 @@ const TYPE_BADGE = {
   joke: 'bg-green-100 text-green-800',
   note: 'bg-gray-200 text-gray-700',
   photo: 'bg-pink-100 text-pink-800',
+  exegesis: 'bg-cyan-100 text-cyan-800',
 };
 
 export default function SermonResourcePicker({
