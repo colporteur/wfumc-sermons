@@ -778,14 +778,25 @@ export async function extractResourcesFromSource({
     // pastor wants only items relevant to their working sermon, this
     // additional constraint sits on top of the standard prompt.
     manuscript
-      ? 'RELEVANCE FILTER (IMPORTANT — overrides default behavior):\n' +
-        "The pastor's active sermon manuscript is provided below. Return\n" +
-        'ONLY items that directly relate to that manuscript — its scripture,\n' +
-        'its themes, its arguments, or the kind of illustration it could\n' +
-        'use. Be strict: if an item in the source is interesting but\n' +
-        "doesn't connect to this specific sermon, SKIP it. The pastor\n" +
-        "can run the extraction again without the filter if they want a\n" +
-        'broader sweep.\n'
+      ? 'RELEVANCE FILTER:\n' +
+        "The pastor's active sermon (scripture, title, and any drafted\n" +
+        'manuscript) is provided below. Prefer items that connect to that\n' +
+        "sermon's scripture, themes, arguments, or the kind of illustration\n" +
+        'it could use.\n' +
+        '\n' +
+        'IMPORTANT INCLUSIONS:\n' +
+        '  - If the source is a commentary on a passage that overlaps the\n' +
+        "    sermon's scripture (same book + overlapping verse range, or a\n" +
+        '    direct synoptic parallel), include the exegesis on that\n' +
+        '    passage — that is exactly what the pastor wants.\n' +
+        '  - When in doubt about a story / quote / illustration that COULD\n' +
+        "    plausibly land in this sermon, include it rather than skip it.\n" +
+        '\n' +
+        'EXCLUDE items that are clearly off-topic for this sermon (a story\n' +
+        "about marriage in a source about a sermon on the loaves, exegesis\n" +
+        "on a different unrelated chapter, etc.). Return [] only if the\n" +
+        "source truly has nothing relevant — not because items are merely\n" +
+        'tangential.\n'
       : '',
     'Return ONLY a JSON array of these objects. No prose, no commentary.',
     'If nothing in the source is worth extracting, return [].',

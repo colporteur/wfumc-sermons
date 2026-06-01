@@ -32,11 +32,41 @@ export default function WorkspaceExtractResources({
   onClose,
   onCommitted, // (counts) => void   counts = { created, attached }
 }) {
-  // "Filter by manuscript" — when on, the manuscript is passed to
-  // Claude as relevance context so only items pertinent to the active
-  // sermon come back. Off by default (broad sweep).
-  const hasManuscript = !!(manuscript && manuscript.trim());
+  // "Filter by manuscript" — when on, the sermon's metadata (scripture,
+  // title, body) is passed to Claude as relevance context so only items
+  // pertinent to the active sermon come back. Off by default (broad
+  // sweep).
+  //
+  // The filter is useful as long as at least ONE of scripture / title /
+  // body has real content. A brand-new sermon called "New sermon" with
+  // no scripture and no body would give Claude nothing to filter on, so
+  // the checkbox is disabled in that case to avoid the trap of "filter
+  // returned [] because there was nothing to filter against".
+  const trimmedManuscript = (manuscript || '').trim();
+  const trimmedScripture = (sermon?.scripture_reference || '').trim();
+  const trimmedTitle = (sermon?.title || '').trim();
+  // Reject default placeholder titles as not-useful-signal.
+  const isPlaceholderTitle =
+    !trimmedTitle ||
+    /^(new sermon|untitled|new)$/i.test(trimmedTitle);
+  const hasFilterSignal =
+    !!trimmedManuscript ||
+    !!trimmedScripture ||
+    !isPlaceholderTitle;
   const [filterByManuscript, setFilterByManuscript] = useState(false);
+
+  // Build the manuscript context block sent to Claude. Combines whatever
+  // signal we have so even an empty-body sermon can filter on its
+  // scripture reference.
+  const buildManuscriptContext = () => {
+    const parts = [];
+    if (!isPlaceholderTitle) parts.push(`Sermon title: ${trimmedTitle}`);
+    if (trimmedScripture) parts.push(`Scripture: ${trimmedScripture}`);
+    if (trimmedManuscript) {
+      parts.push(`Manuscript (so far):\n${trimmedManuscript}`);
+    }
+    return parts.join('\n\n');
+  };
   const [stage, setStage] = useState('input'); // 'input' | 'review' | 'done'
   const [mode, setMode] = useState('paste');
   const [pasted, setPasted] = useState('');
@@ -52,6 +82,10 @@ export default function WorkspaceExtractResources({
   const [sourceLabel, setSourceLabel] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [error, setError] = useState(null);
+  // Tracks whether the last empty result happened with the relevance
+  // filter on, so the error can offer a one-click "Retry without filter"
+  // button (faster + clearer than asking the pastor to manually untick).
+  const [lastEmptyWithFilter, setLastEmptyWithFilter] = useState(false);
   const [proposals, setProposals] = useState([]);
   const [committing, setCommitting] = useState(false);
   const [committed, setCommitted] = useState({ created: 0, attached: 0 });
@@ -129,8 +163,13 @@ export default function WorkspaceExtractResources({
 
   // --- extract -------------------------------------------------------
 
-  const handleExtract = async () => {
+  // forceWithoutFilter=true is used by the "Retry without filter"
+  // button on the empty-result error — runs the same extraction with
+  // the manuscript context blanked, so the pastor can tell whether
+  // the filter or the page selection is to blame.
+  const handleExtract = async ({ forceWithoutFilter = false } = {}) => {
     setError(null);
+    setLastEmptyWithFilter(false);
     let text = '';
     let label = sourceLabel.trim();
     if (mode === 'paste') {
@@ -156,16 +195,24 @@ export default function WorkspaceExtractResources({
     }
     setExtracting(true);
     try {
+      const useFilter =
+        !forceWithoutFilter && filterByManuscript && hasFilterSignal;
       const items = await extractResourcesFromSource({
         sourceText: text,
         sourceLabel: label,
-        manuscriptContext:
-          filterByManuscript && hasManuscript ? manuscript : '',
+        manuscriptContext: useFilter ? buildManuscriptContext() : '',
       });
       if (items.length === 0) {
-        setError(
-          "Claude didn't find anything worth extracting from this source. Try a different chunk?"
-        );
+        if (useFilter) {
+          setError(
+            "Claude didn't find anything in this source relevant to your sermon. Could be the filter was too strict, or the page range doesn't cover the right material."
+          );
+          setLastEmptyWithFilter(true);
+        } else {
+          setError(
+            "Claude didn't find anything worth extracting from this source. Try a different chunk?"
+          );
+        }
         setExtracting(false);
         return;
       }
@@ -312,9 +359,21 @@ export default function WorkspaceExtractResources({
         </div>
 
         {error && (
-          <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 mb-2">
-            {error}
-          </p>
+          <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2 mb-2">
+            <p>{error}</p>
+            {lastEmptyWithFilter && (
+              <button
+                type="button"
+                onClick={() =>
+                  handleExtract({ forceWithoutFilter: true })
+                }
+                disabled={extracting}
+                className="mt-2 px-3 py-1 rounded bg-white border border-red-300 text-red-700 hover:bg-red-100 text-xs font-medium disabled:opacity-50"
+              >
+                {extracting ? 'Retrying…' : 'Retry without filter'}
+              </button>
+            )}
+          </div>
         )}
 
         <div className="flex-1 overflow-y-auto pr-1 space-y-3">
@@ -468,12 +527,12 @@ export default function WorkspaceExtractResources({
               <div className="pt-2 border-t flex items-center justify-between flex-wrap gap-2">
                 <label
                   className={`inline-flex items-center gap-2 text-xs ${
-                    hasManuscript ? 'text-gray-700' : 'text-gray-400'
+                    hasFilterSignal ? 'text-gray-700' : 'text-gray-400'
                   }`}
                   title={
-                    hasManuscript
-                      ? "Only return items that connect to this sermon's scripture, themes, or arguments."
-                      : 'Add some manuscript text in the workspace to enable this.'
+                    hasFilterSignal
+                      ? `Filter on:${trimmedScripture ? `\nScripture: ${trimmedScripture}` : ''}${!isPlaceholderTitle ? `\nTitle: ${trimmedTitle}` : ''}${trimmedManuscript ? '\n+ manuscript body' : ''}`
+                      : "Set a scripture reference, a real title, or add manuscript text in the workspace to enable this."
                   }
                 >
                   <input
@@ -482,9 +541,15 @@ export default function WorkspaceExtractResources({
                     onChange={(e) =>
                       setFilterByManuscript(e.target.checked)
                     }
-                    disabled={!hasManuscript || extracting}
+                    disabled={!hasFilterSignal || extracting}
                   />
-                  Only items relevant to this sermon's manuscript
+                  Only items relevant to this sermon
+                  {hasFilterSignal && trimmedScripture && (
+                    <span className="text-[10px] text-gray-500 ml-1">
+                      ({trimmedScripture}
+                      {trimmedManuscript ? ' + body' : ''})
+                    </span>
+                  )}
                 </label>
                 <button
                   type="button"
