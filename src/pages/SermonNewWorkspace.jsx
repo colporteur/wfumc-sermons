@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
+import { buildResourcesContext } from '../lib/workspaceResources';
 import { useAuth } from '../contexts/AuthContext.jsx';
+import SermonResourcePicker from '../components/SermonResourcePicker.jsx';
 
 // /sermons/new/workspace — start a brand-new sermon directly in the
 // chat-revise Workspace. The lightweight intro form here only collects
@@ -28,6 +30,10 @@ export default function SermonNewWorkspace() {
   const [title, setTitle] = useState('');
   const [scripture, setScripture] = useState('');
   const [starter, setStarter] = useState('');
+  // Resources picked from the inline picker. Empty by default. On
+  // submit these get pre-attached via sermon_resources AND woven into
+  // the manuscript so Claude's first turn incorporates them.
+  const [pickedResources, setPickedResources] = useState([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState(null);
 
@@ -37,29 +43,84 @@ export default function SermonNewWorkspace() {
       setError('Not signed in.');
       return;
     }
-    if (!title.trim() && !scripture.trim() && !starter.trim()) {
+    if (
+      !title.trim() &&
+      !scripture.trim() &&
+      !starter.trim() &&
+      pickedResources.length === 0
+    ) {
       setError(
-        'Please give the sermon at least a title, a scripture reference, or some starter content.'
+        'Please give the sermon at least a title, a scripture reference, some starter content, or a resource to start from.'
       );
       return;
     }
     setCreating(true);
     setError(null);
     try {
-      const { data, error: err } = await withTimeout(
+      // Build the initial manuscript_text. When resources are picked,
+      // prepend a clearly-labeled block so Claude's first chat turn
+      // sees them as starting materials to weave in (the bracketed
+      // instruction tells Claude not to echo the metadata in the
+      // output draft).
+      const starterTrimmed = starter.trim();
+      let manuscript = starterTrimmed || null;
+      if (pickedResources.length > 0) {
+        const ctx = buildResourcesContext(pickedResources);
+        const header =
+          '[Starting materials provided by the pastor. Weave these into ' +
+          'the sermon draft as appropriate — do not echo this header or ' +
+          'the "Resource N" labels in your output.]';
+        manuscript =
+          header +
+          '\n\n' +
+          ctx +
+          (starterTrimmed ? '\n\n---\n\n' + starterTrimmed : '');
+      }
+
+      const { data: created, error: err } = await withTimeout(
         supabase
           .from('sermons')
           .insert({
             owner_user_id: user.id,
             title: title.trim() || 'New sermon',
             scripture_reference: scripture.trim() || null,
-            manuscript_text: starter.trim() || null,
+            manuscript_text: manuscript,
           })
           .select('id')
           .single()
       );
       if (err) throw err;
-      navigate(`/sermons/${data.id}/workspace`);
+      const sermonId = created.id;
+
+      // Pre-attach picked resources via the sermon_resources junction
+      // so they appear in the workspace's resource panel and on the
+      // sermon's "Resources used" card. UPSERT-with-ignore-duplicates
+      // matches what the workspace's auto-link does.
+      if (pickedResources.length > 0) {
+        const rows = pickedResources.map((r) => ({
+          sermon_id: sermonId,
+          resource_id: r.id,
+          owner_user_id: user.id,
+          used_notes: 'Selected at sermon creation in Draft in Workspace',
+        }));
+        const { error: linkErr } = await withTimeout(
+          supabase
+            .from('sermon_resources')
+            .upsert(rows, {
+              onConflict: 'sermon_id,resource_id',
+              ignoreDuplicates: true,
+            })
+        );
+        // Don't block on link failure — the manuscript already has
+        // the resource content, so the pastor can re-link manually
+        // later. Just surface the error.
+        if (linkErr) {
+          // eslint-disable-next-line no-console
+          console.warn('Failed to pre-attach resources:', linkErr);
+        }
+      }
+
+      navigate(`/sermons/${sermonId}/workspace`);
     } catch (e2) {
       setError(e2.message || String(e2));
       setCreating(false);
@@ -119,6 +180,25 @@ export default function SermonNewWorkspace() {
           <p className="text-xs text-gray-500 mt-1">
             Strongly recommended. Drives the resource auto-suggest
             matcher and gives Claude the text to preach on.
+          </p>
+        </div>
+
+        <div>
+          <label className="label">
+            Start from resources{' '}
+            <span className="text-gray-500 font-normal">(optional)</span>
+          </label>
+          <SermonResourcePicker
+            scriptureRef={scripture}
+            selected={pickedResources}
+            onChange={setPickedResources}
+            disabled={creating}
+          />
+          <p className="text-xs text-gray-500 mt-2">
+            Picked resources are pre-attached to the sermon AND seeded
+            into the manuscript so Claude's first turn naturally weaves
+            them in. You can add more or detach any of them later from
+            inside the Workspace.
           </p>
         </div>
 
