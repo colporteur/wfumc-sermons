@@ -39,6 +39,11 @@ export default function SermonResourcePicker({
   const [searchResults, setSearchResults] = useState([]);
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState(null);
+  // When ticked, scripture-overlap suggestions also include resources
+  // tagged with parallel passages in Mark / Luke / John (per Aland's
+  // synopsis). Off by default — only changes the suggestions list, not
+  // free-text search.
+  const [synopticParallels, setSynopticParallels] = useState(false);
   // Track which scripture ref we last fetched for so a stale callback
   // doesn't overwrite a newer fetch result.
   const lastScriptureRef = useRef('');
@@ -49,6 +54,8 @@ export default function SermonResourcePicker({
   );
 
   // --- scripture-overlap suggestions, debounced -------------------
+  // Re-fires when either the scripture reference or the synoptic-
+  // parallels flag changes so the list reflects the current toggle.
   useEffect(() => {
     const ref = (scriptureRef || '').trim();
     lastScriptureRef.current = ref;
@@ -60,7 +67,10 @@ export default function SermonResourcePicker({
     setError(null);
     const handle = setTimeout(async () => {
       try {
-        const rows = await suggestResourcesByScripture(ref, { limit: 20 });
+        const rows = await suggestResourcesByScripture(ref, {
+          limit: 20,
+          includeSynopticParallels: synopticParallels,
+        });
         // Guard against an older request resolving after a newer one.
         if (lastScriptureRef.current !== ref) return;
         setSuggestions(rows || []);
@@ -74,7 +84,7 @@ export default function SermonResourcePicker({
       }
     }, 400);
     return () => clearTimeout(handle);
-  }, [scriptureRef]);
+  }, [scriptureRef, synopticParallels]);
 
   // --- free-text search, debounced --------------------------------
   useEffect(() => {
@@ -172,10 +182,25 @@ export default function SermonResourcePicker({
 
       {/* Scripture-overlap suggestions */}
       <div>
-        <p className="text-xs text-gray-600 font-medium mb-1">
-          Suggested by scripture overlap
-          {scriptureRef ? ` — ${scriptureRef}` : ''}
-        </p>
+        <div className="flex items-baseline justify-between gap-3 flex-wrap mb-1">
+          <p className="text-xs text-gray-600 font-medium">
+            Suggested by scripture overlap
+            {scriptureRef ? ` — ${scriptureRef}` : ''}
+          </p>
+          <label
+            className="inline-flex items-center gap-1.5 text-[11px] text-gray-700 cursor-pointer"
+            title="Also include resources tagged with parallel passages in Matthew, Mark, Luke, or John (per Aland's synopsis)."
+          >
+            <input
+              type="checkbox"
+              checked={synopticParallels}
+              onChange={(e) => setSynopticParallels(e.target.checked)}
+              disabled={disabled || !scriptureRef.trim()}
+              className="rounded"
+            />
+            Match synoptic parallels
+          </label>
+        </div>
         {!scriptureRef.trim() ? (
           <p className="text-xs text-gray-400 italic">
             Enter a scripture reference above to see suggestions.
@@ -249,11 +274,19 @@ function ResourceRowList({ rows, onPick, disabled }) {
                   {r.title || '(untitled)'}
                 </span>
                 {r.scripture_refs && (
-                  <span className="text-[11px] text-gray-500 truncate max-w-[160px]">
+                  <span className="text-[11px] text-gray-500 truncate max-w-[200px]">
                     {r.scripture_refs}
                   </span>
                 )}
               </div>
+              {/* When the lib annotated this row with which range(s)
+                  matched, show them — especially useful for parallel
+                  matches that include "(parallel of Matt 9:9-13)". */}
+              {Array.isArray(r._overlap_labels) && r._overlap_labels.length > 0 && (
+                <p className="text-[11px] text-emerald-700 mt-0.5">
+                  matches {r._overlap_labels.join(', ')}
+                </p>
+              )}
               {r.content && (
                 <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">
                   {r.content}

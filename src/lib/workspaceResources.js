@@ -4,6 +4,8 @@ import {
   parseScriptureRanges,
   findOverlappingRanges,
   formatRange,
+  rangesOverlap,
+  expandWithSynopticParallels,
 } from './scripture';
 
 // Helpers for the Workspace's Resources picker. Two responsibilities:
@@ -63,15 +65,29 @@ export async function searchResources(q, { limit = 12 } = {}) {
 // Annotates each surviving row with `_overlap_ranges` (the specific
 // ranges from the resource that matched) so the UI can show *why*
 // each suggestion came up.
+//
+// When `includeSynopticParallels` is true, the target range set is
+// expanded via expandWithSynopticParallels — so a search for
+// "Matthew 9:9-13" also surfaces resources tagged with "Mark 2:13-17"
+// or "Luke 5:27-32" (Call of Levi). Each overlap label gets a
+// "(parallel of Matt 9:9-13)" suffix when it only matched via a
+// parallel, so the UI can show why the row came up.
 export async function suggestResourcesByScripture(scriptureReference, {
   limit = 24,
+  includeSynopticParallels = false,
 } = {}) {
   const sermonRanges = parseScriptureRanges(scriptureReference);
   if (sermonRanges.length === 0) return [];
 
-  // Cheap book-level pre-filter for the SQL query — this lets RLS and
-  // Postgres do the bulk filtering before we pay for the JS overlap test.
-  const books = [...new Set(sermonRanges.map((r) => r.book))];
+  // Expand with synoptic parallels if requested. Each added range
+  // carries `.parallelOf` pointing back to the originating user range.
+  const targetRanges = includeSynopticParallels
+    ? expandWithSynopticParallels(sermonRanges)
+    : sermonRanges;
+
+  // Cheap book-level pre-filter for the SQL query — uses the EXPANDED
+  // book set so Mark/Luke candidates make it past the SQL stage.
+  const books = [...new Set(targetRanges.map((r) => r.book))];
   const orClause = books
     .map((b) => `scripture_refs.ilike.%${b.replace(/[%_]/g, '')}%`)
     .join(',');
@@ -90,15 +106,34 @@ export async function suggestResourcesByScripture(scriptureReference, {
   );
   if (error) throw error;
 
-  // Verse-level post-filter.
+  // Verse-level post-filter against the expanded target set.
   const matched = [];
   for (const r of data ?? []) {
-    const overlap = findOverlappingRanges(scriptureReference, r.scripture_refs);
+    const resourceRanges = parseScriptureRanges(r.scripture_refs);
+    const overlap = [];
+    for (const rr of resourceRanges) {
+      for (const tr of targetRanges) {
+        if (rangesOverlap(rr, tr)) {
+          // Tag the matched resource range with the parallel info
+          // (if it matched via a parallel) so the UI can label it.
+          overlap.push(
+            tr.parallelOf
+              ? { ...rr, _parallelOf: tr.parallelOf }
+              : rr
+          );
+          break; // count each resource range at most once
+        }
+      }
+    }
     if (overlap.length === 0) continue;
     matched.push({
       ...r,
       _overlap_ranges: overlap,
-      _overlap_labels: overlap.map(formatRange),
+      _overlap_labels: overlap.map((o) =>
+        o._parallelOf
+          ? `${formatRange(o)} (parallel of ${o._parallelOf})`
+          : formatRange(o)
+      ),
     });
     if (matched.length >= limit) break;
   }
