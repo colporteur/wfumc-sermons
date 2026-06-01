@@ -229,70 +229,107 @@ function chapterVersePartOf(chunk) {
 
 // Parse a chapter:verse expression and return an array of ranges.
 // Handles:
-//   "23"            → [{ch 23, v 1-ANY}]
-//   "17:22"         → [{ch 17, v 22-22}]
-//   "17:22-31"      → [{ch 17, v 22-31}]
-//   "17:22-18:5"    → [{ch 17, v 22-ANY}, {ch 18, v 1-5}]   (cross-chapter)
-//   "17-19"         → [{ch 17, v 1-ANY}, {ch 18, v 1-ANY}, {ch 19, v 1-ANY}]
+//   "23"               → [{ch 23, v 1-ANY}]
+//   "17:22"            → [{ch 17, v 22-22}]
+//   "17:22-31"         → [{ch 17, v 22-31}]
+//   "17:22-18:5"       → [{ch 17, v 22-ANY}, {ch 18, v 1-5}]   (cross-chapter)
+//   "17-19"            → [{ch 17, v 1-ANY}, {ch 18, v 1-ANY}, {ch 19, v 1-ANY}]
+//   "9:9-13, 18-26"    → [{ch 9, v 9-13}, {ch 9, v 18-26}]      (chained)
+//   "9:9, 12"          → [{ch 9, v 9}, {ch 9, v 12}]
+//   "5:1-12, 6:9-13"   → [{ch 5, v 1-12}, {ch 6, v 9-13}]
+//
+// Strategy: split on commas first, then parse each piece while
+// tracking the most-recent chapter. Pieces without a colon inherit
+// that chapter (so "18-26" after "9:9-13" means verses 18-26 of ch 9,
+// NOT chapters 18-26). The first piece, if colon-less, is treated as
+// a chapter range (so "1-3" by itself means whole chapters 1-3).
 function parseChapterVerse(s) {
   if (!s) return [];
-  // Normalize en/em dashes to hyphen, then drop everything that isn't
-  // a digit, colon, or hyphen. That cleanly strips trailing translation
-  // markers ("3:16 NRSV" → "3:16"), parens, and stray whitespace.
-  const t = s.replace(/[–—]/g, '-').replace(/[^\d:\-]/g, '').trim();
-  if (!t) return [];
+  const pieces = s.split(',').map((p) => p.trim()).filter(Boolean);
+  const out = [];
+  let lastChapter = null;
 
-  // Cross-chapter range "17:22-18:5"
-  let m = t.match(/^(\d+):(\d+)-(\d+):(\d+)$/);
-  if (m) {
-    const startCh = +m[1];
-    const startV = +m[2];
-    const endCh = +m[3];
-    const endV = +m[4];
-    if (startCh === endCh) {
-      return [{ chapter: startCh, startVerse: startV, endVerse: endV }];
+  for (const piece of pieces) {
+    // Normalize en/em dashes to hyphen, then drop everything that isn't
+    // a digit, colon, or hyphen. Strips trailing translation markers
+    // ("3:16 NRSV" → "3:16"), parens, and stray whitespace.
+    const t = piece.replace(/[–—]/g, '-').replace(/[^\d:\-]/g, '').trim();
+    if (!t) continue;
+
+    // Cross-chapter range "17:22-18:5"
+    let m = t.match(/^(\d+):(\d+)-(\d+):(\d+)$/);
+    if (m) {
+      const startCh = +m[1];
+      const startV = +m[2];
+      const endCh = +m[3];
+      const endV = +m[4];
+      if (startCh === endCh) {
+        out.push({ chapter: startCh, startVerse: startV, endVerse: endV });
+      } else {
+        out.push({ chapter: startCh, startVerse: startV, endVerse: ANY_VERSE });
+        for (let ch = startCh + 1; ch < endCh; ch++) {
+          out.push({ chapter: ch, startVerse: 1, endVerse: ANY_VERSE });
+        }
+        out.push({ chapter: endCh, startVerse: 1, endVerse: endV });
+      }
+      lastChapter = endCh;
+      continue;
     }
-    const out = [{ chapter: startCh, startVerse: startV, endVerse: ANY_VERSE }];
-    for (let ch = startCh + 1; ch < endCh; ch++) {
-      out.push({ chapter: ch, startVerse: 1, endVerse: ANY_VERSE });
+
+    // Single chapter, verse range "17:22-31"
+    m = t.match(/^(\d+):(\d+)-(\d+)$/);
+    if (m) {
+      out.push({ chapter: +m[1], startVerse: +m[2], endVerse: +m[3] });
+      lastChapter = +m[1];
+      continue;
     }
-    out.push({ chapter: endCh, startVerse: 1, endVerse: endV });
-    return out;
-  }
 
-  // Single chapter, verse range "17:22-31"
-  m = t.match(/^(\d+):(\d+)-(\d+)$/);
-  if (m) {
-    return [{ chapter: +m[1], startVerse: +m[2], endVerse: +m[3] }];
-  }
-
-  // Single verse "17:22"
-  m = t.match(/^(\d+):(\d+)$/);
-  if (m) {
-    const ch = +m[1];
-    const v = +m[2];
-    return [{ chapter: ch, startVerse: v, endVerse: v }];
-  }
-
-  // Chapter range "17-19"
-  m = t.match(/^(\d+)-(\d+)$/);
-  if (m) {
-    const start = +m[1];
-    const end = +m[2];
-    const out = [];
-    for (let ch = start; ch <= end; ch++) {
-      out.push({ chapter: ch, startVerse: 1, endVerse: ANY_VERSE });
+    // Single verse "17:22"
+    m = t.match(/^(\d+):(\d+)$/);
+    if (m) {
+      const ch = +m[1];
+      const v = +m[2];
+      out.push({ chapter: ch, startVerse: v, endVerse: v });
+      lastChapter = ch;
+      continue;
     }
-    return out;
+
+    // Ambiguous "17-19" — chapter range if first piece, verse range in
+    // lastChapter otherwise. This is what makes "9:9-13, 18-26" do the
+    // right thing.
+    m = t.match(/^(\d+)-(\d+)$/);
+    if (m) {
+      const a = +m[1];
+      const b = +m[2];
+      if (lastChapter !== null) {
+        out.push({ chapter: lastChapter, startVerse: a, endVerse: b });
+      } else {
+        for (let ch = a; ch <= b; ch++) {
+          out.push({ chapter: ch, startVerse: 1, endVerse: ANY_VERSE });
+        }
+        lastChapter = b;
+      }
+      continue;
+    }
+
+    // Ambiguous bare "23" — whole chapter if first piece, single verse
+    // in lastChapter otherwise (so "9:9, 12, 15" parses cleanly).
+    m = t.match(/^(\d+)$/);
+    if (m) {
+      const n = +m[1];
+      if (lastChapter !== null) {
+        out.push({ chapter: lastChapter, startVerse: n, endVerse: n });
+      } else {
+        out.push({ chapter: n, startVerse: 1, endVerse: ANY_VERSE });
+        lastChapter = n;
+      }
+      continue;
+    }
+    // Piece didn't match any pattern — skip it. The caller no longer
+    // falls back to "whole book" for an unparseable piece.
   }
 
-  // Just a chapter "23" (e.g. "Psalm 23")
-  m = t.match(/^(\d+)$/);
-  if (m) {
-    return [{ chapter: +m[1], startVerse: 1, endVerse: ANY_VERSE }];
-  }
-
-  return [];
+  return out;
 }
 
 // Parse a free-form scripture reference into an array of normalized
@@ -333,8 +370,12 @@ export function parseScriptureRanges(ref) {
 
     const subs = parseChapterVerse(after);
     if (subs.length === 0) {
-      // Couldn't make sense of the chapter:verse — fall back to book-only.
-      out.push({ book, chapter: null, startVerse: 1, endVerse: ANY_VERSE });
+      // Couldn't make sense of the chapter:verse — DROP the citation
+      // rather than falling back to "whole book". The whole-book
+      // fallback caused a search for "Matthew 9:9-13, 18-26" to match
+      // every resource tagged with any chapter of Matthew, because the
+      // unparseable comma-list became "all of Matthew". If you want
+      // whole-book behavior, write the citation as just "Matthew".
     } else {
       for (const s of subs) out.push({ book, ...s });
     }
