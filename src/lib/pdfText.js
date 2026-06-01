@@ -57,6 +57,10 @@ export async function extractPdfText(blob, { pages } = {}) {
   const total = doc.numPages;
   const filter = pages instanceof Set ? pages : null;
 
+  // pageTexts: per-page entries with the page number alongside the
+  // extracted text. Lets the UI render a "PDF page 4: …" preview so
+  // the pastor can catch the common front-matter shift (PDF page 4
+  // ≠ printed page 4 when there's a cover, preface, TOC, etc.).
   const pageTexts = [];
   const pagesExtracted = [];
   for (let p = 1; p <= total; p++) {
@@ -69,10 +73,10 @@ export async function extractPdfText(blob, { pages } = {}) {
       .join(' ')
       .replace(/[ \t]+/g, ' ')
       .trim();
-    pageTexts.push(pageText);
+    pageTexts.push({ page: p, text: pageText });
     pagesExtracted.push(p);
   }
 
-  const text = pageTexts.join('\n\n').trim();
-  return { text, pageCount: total, pagesExtracted };
+  const text = pageTexts.map((pt) => pt.text).join('\n\n').trim();
+  return { text, pageCount: total, pagesExtracted, pageTexts };
 }

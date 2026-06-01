@@ -1060,6 +1060,7 @@ export default function SermonWorkspace() {
         <WorkspaceExtractResources
           sermon={sermon}
           ownerUserId={user?.id}
+          manuscript={manuscript}
           onClose={() => setExtractOpen(false)}
           onCommitted={({ created, attached }) => {
             // Surface the result as a quiet chat note so the pastor sees

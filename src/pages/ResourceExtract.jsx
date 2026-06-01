@@ -48,6 +48,10 @@ export default function ResourceExtract() {
   // Optional page-range filter for PDF mode. Empty = all pages.
   // Format like "4-17, 22, 30-35". Parsed when a file is picked.
   const [pageRangeSpec, setPageRangeSpec] = useState('');
+  // For PDFs: per-page extracted texts. Powers the preview pane that
+  // lets the pastor verify they restricted to the right pages (PDF
+  // page numbers don't always match printed page numbers).
+  const [pagePreviews, setPagePreviews] = useState([]);
 
   // Review state
   const [proposals, setProposals] = useState([]); // [{ checked, ...resource }]
@@ -89,6 +93,7 @@ export default function ResourceExtract() {
     setError(null);
     setParseStatus(null);
     setParsedText('');
+    setPagePreviews([]);
     setSourceLabel(file.name);
     try {
       if (mode === 'txt') {
@@ -109,10 +114,11 @@ export default function ResourceExtract() {
         } catch (parseErr) {
           throw new Error(`Page range: ${parseErr.message}`);
         }
-        const { text, pageCount, pagesExtracted } = await extractPdfText(
+        const { text, pageCount, pagesExtracted, pageTexts } = await extractPdfText(
           file,
           pageFilter ? { pages: pageFilter } : undefined
         );
+        setPagePreviews(pageTexts || []);
         if (!text.trim()) {
           throw new Error(
             pageFilter
@@ -515,7 +521,45 @@ export default function ResourceExtract() {
                   Pages field above to limit Claude to a section.
                 </p>
               )}
-              {parsedText && (
+              {/* PDF mode: per-page preview so the pastor can verify
+                  which pages were read. Catches the common PDF-page-
+                  vs-printed-page mismatch (front matter shifts the
+                  numbering). */}
+              {mode === 'pdf' && pagePreviews.length > 0 && (
+                <>
+                  <details className="text-xs border border-gray-200 rounded">
+                    <summary className="cursor-pointer px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700">
+                      Preview included text ({pagePreviews.length} page
+                      {pagePreviews.length === 1 ? '' : 's'}) — verify the
+                      right pages were read before extracting
+                    </summary>
+                    <div className="max-h-72 overflow-y-auto p-2 space-y-2 bg-white">
+                      {pagePreviews.map((pt) => (
+                        <div key={pt.page}>
+                          <p className="text-[10px] uppercase tracking-wide text-umc-700">
+                            PDF page {pt.page}
+                          </p>
+                          <pre className="text-[11px] whitespace-pre-wrap font-mono text-gray-700 bg-gray-50 border border-gray-100 rounded p-2">
+                            {pt.text
+                              ? pt.text.slice(0, 1500) +
+                                (pt.text.length > 1500
+                                  ? '\n…[truncated for preview]'
+                                  : '')
+                              : '[no extractable text on this page]'}
+                          </pre>
+                        </div>
+                      ))}
+                    </div>
+                  </details>
+                  <p className="text-[11px] text-gray-500 italic">
+                    Tip: PDF page numbers start at the cover — printed
+                    page 1 of a commentary is often PDF page 10+ after
+                    the front matter.
+                  </p>
+                </>
+              )}
+              {/* Non-PDF preview: flat text (txt mode). */}
+              {mode !== 'pdf' && parsedText && (
                 <details className="text-xs">
                   <summary className="cursor-pointer text-gray-600 hover:text-gray-900">
                     Preview extracted text ({parsedText.length.toLocaleString()} chars)

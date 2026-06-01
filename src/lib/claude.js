@@ -717,10 +717,12 @@ export async function extractResourcesFromManuscript({
 export async function extractResourcesFromSource({
   sourceText,
   sourceLabel = '',
+  manuscriptContext = '',
 }) {
   if (!sourceText || !sourceText.trim()) {
     throw new Error('No source text to extract from.');
   }
+  const manuscript = (manuscriptContext || '').trim();
 
   const system = [
     'You help a United Methodist pastor mine reading material — articles,',
@@ -772,6 +774,19 @@ export async function extractResourcesFromSource({
     'When suggesting scripture refs, prefer Revised Common Lectionary',
     'passages (Years A/B/C) when they fit. The pastor preaches RCL.',
     '',
+    // The "filter by manuscript" flag flips this rule on. When the
+    // pastor wants only items relevant to their working sermon, this
+    // additional constraint sits on top of the standard prompt.
+    manuscript
+      ? 'RELEVANCE FILTER (IMPORTANT — overrides default behavior):\n' +
+        "The pastor's active sermon manuscript is provided below. Return\n" +
+        'ONLY items that directly relate to that manuscript — its scripture,\n' +
+        'its themes, its arguments, or the kind of illustration it could\n' +
+        'use. Be strict: if an item in the source is interesting but\n' +
+        "doesn't connect to this specific sermon, SKIP it. The pastor\n" +
+        "can run the extraction again without the filter if they want a\n" +
+        'broader sweep.\n'
+      : '',
     'Return ONLY a JSON array of these objects. No prose, no commentary.',
     'If nothing in the source is worth extracting, return [].',
   ].join('\n');
@@ -783,7 +798,17 @@ export async function extractResourcesFromSource({
     sourceText.length > 60000
       ? sourceText.slice(0, 60000) + '\n…[truncated]'
       : sourceText;
-  const userMessage = `${ctx}Source text:\n\n${trimmed.trim()}`;
+  // Cap manuscript context separately so a 20k-word manuscript doesn't
+  // crowd out the source on extraction. The first 4000 chars give Claude
+  // plenty of signal about the sermon's scripture + themes + tone.
+  const manuscriptBlock = manuscript
+    ? `Pastor's active sermon manuscript (for relevance filtering):\n\n${
+        manuscript.length > 4000
+          ? manuscript.slice(0, 4000) + '\n…[manuscript truncated for prompt length]'
+          : manuscript
+      }\n\n---\n\n`
+    : '';
+  const userMessage = `${ctx}${manuscriptBlock}Source text:\n\n${trimmed.trim()}`;
 
   const response = await callClaude(
     {

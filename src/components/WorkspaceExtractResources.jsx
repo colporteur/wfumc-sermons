@@ -28,9 +28,15 @@ const TYPE_OPTIONS = ['story', 'quote', 'illustration', 'joke', 'exegesis'];
 export default function WorkspaceExtractResources({
   sermon,
   ownerUserId,
+  manuscript = '',
   onClose,
   onCommitted, // (counts) => void   counts = { created, attached }
 }) {
+  // "Filter by manuscript" — when on, the manuscript is passed to
+  // Claude as relevance context so only items pertinent to the active
+  // sermon come back. Off by default (broad sweep).
+  const hasManuscript = !!(manuscript && manuscript.trim());
+  const [filterByManuscript, setFilterByManuscript] = useState(false);
   const [stage, setStage] = useState('input'); // 'input' | 'review' | 'done'
   const [mode, setMode] = useState('paste');
   const [pasted, setPasted] = useState('');
@@ -39,6 +45,9 @@ export default function WorkspaceExtractResources({
   const [fetchedUrl, setFetchedUrl] = useState('');
   const [pageRangeSpec, setPageRangeSpec] = useState('');
   const [parsedText, setParsedText] = useState('');
+  // For PDFs: per-page texts so the pastor can preview which pages
+  // actually got included. Empty for paste / URL modes.
+  const [pagePreviews, setPagePreviews] = useState([]);
   const [parseStatus, setParseStatus] = useState(null);
   const [sourceLabel, setSourceLabel] = useState('');
   const [extracting, setExtracting] = useState(false);
@@ -56,6 +65,7 @@ export default function WorkspaceExtractResources({
     setError(null);
     setParseStatus(null);
     setParsedText('');
+    setPagePreviews([]);
     setSourceLabel(file.name);
     try {
       setParseStatus('Reading the PDF…');
@@ -65,10 +75,11 @@ export default function WorkspaceExtractResources({
       } catch (parseErr) {
         throw new Error(`Page range: ${parseErr.message}`);
       }
-      const { text, pageCount, pagesExtracted } = await extractPdfText(
+      const { text, pageCount, pagesExtracted, pageTexts } = await extractPdfText(
         file,
         pageFilter ? { pages: pageFilter } : undefined
       );
+      setPagePreviews(pageTexts || []);
       if (!text.trim()) {
         throw new Error(
           pageFilter
@@ -148,6 +159,8 @@ export default function WorkspaceExtractResources({
       const items = await extractResourcesFromSource({
         sourceText: text,
         sourceLabel: label,
+        manuscriptContext:
+          filterByManuscript && hasManuscript ? manuscript : '',
       });
       if (items.length === 0) {
         setError(
@@ -417,10 +430,62 @@ export default function WorkspaceExtractResources({
                       <p className="text-xs text-umc-700 mt-2">{parseStatus}</p>
                     )}
                   </div>
+                  {pagePreviews.length > 0 && (
+                    <details className="text-xs border border-gray-200 rounded">
+                      <summary className="cursor-pointer px-2 py-1 bg-gray-50 hover:bg-gray-100 text-gray-700">
+                        Preview included text ({pagePreviews.length} page
+                        {pagePreviews.length === 1 ? '' : 's'}) — verify the
+                        right pages were read before extracting
+                      </summary>
+                      <div className="max-h-72 overflow-y-auto p-2 space-y-2 bg-white">
+                        {pagePreviews.map((pt) => (
+                          <div key={pt.page}>
+                            <p className="text-[10px] uppercase tracking-wide text-umc-700">
+                              PDF page {pt.page}
+                            </p>
+                            <pre className="text-[11px] whitespace-pre-wrap font-mono text-gray-700 bg-gray-50 border border-gray-100 rounded p-2">
+                              {pt.text
+                                ? pt.text.slice(0, 1500) +
+                                  (pt.text.length > 1500 ? '\n…[truncated for preview]' : '')
+                                : '[no extractable text on this page]'}
+                            </pre>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  )}
+                  {pagePreviews.length > 0 && (
+                    <p className="text-[11px] text-gray-500 italic">
+                      Tip: if the text you see isn't what you expected,
+                      remember PDF pages start at the cover — printed
+                      page 1 of a commentary is often PDF page 10+ after
+                      the front matter.
+                    </p>
+                  )}
                 </div>
               )}
 
-              <div className="flex justify-end pt-2 border-t">
+              <div className="pt-2 border-t flex items-center justify-between flex-wrap gap-2">
+                <label
+                  className={`inline-flex items-center gap-2 text-xs ${
+                    hasManuscript ? 'text-gray-700' : 'text-gray-400'
+                  }`}
+                  title={
+                    hasManuscript
+                      ? "Only return items that connect to this sermon's scripture, themes, or arguments."
+                      : 'Add some manuscript text in the workspace to enable this.'
+                  }
+                >
+                  <input
+                    type="checkbox"
+                    checked={filterByManuscript}
+                    onChange={(e) =>
+                      setFilterByManuscript(e.target.checked)
+                    }
+                    disabled={!hasManuscript || extracting}
+                  />
+                  Only items relevant to this sermon's manuscript
+                </label>
                 <button
                   type="button"
                   onClick={handleExtract}
