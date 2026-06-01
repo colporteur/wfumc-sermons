@@ -682,6 +682,101 @@ export default function ResourceList() {
         </div>
       )}
 
+      {/* Diagnostic: if the search produced matches but the regular
+          filters below silently dropped them, surface that with a
+          one-click "Clear other filters" button. This catches the trap
+          where Book=Matthew (a Phase A sticky filter, URL-persisted)
+          hides Mark/Luke synoptic-parallel matches. */}
+      {(() => {
+        if (!scriptureThemeMatches) return null;
+        // How many would the active match channel surface BEFORE the
+        // regular filter row applied?
+        const byS = scriptureThemeMatches.byScripture;
+        const byT = scriptureThemeMatches.byThemes;
+        const sIds = new Set(byS.keys());
+        const tIds = new Set(byT.keys());
+        let preFilterCount;
+        switch (matchFilter) {
+          case 'scripture':
+            preFilterCount = sIds.size;
+            break;
+          case 'themes':
+            preFilterCount = tIds.size;
+            break;
+          case 'both':
+            preFilterCount = [...sIds].filter((id) => tIds.has(id)).length;
+            break;
+          case 'all':
+          default:
+            preFilterCount = new Set([...sIds, ...tIds]).size;
+        }
+        if (preFilterCount === 0) return null;
+        if (filtered.length === preFilterCount) return null;
+        // List which regular filters are non-default + responsible.
+        const active = [];
+        if (filters.search?.trim()) active.push({ label: `Search: "${filters.search.trim()}"`, key: 'search' });
+        if (filters.type !== 'any') active.push({ label: `Type: ${filters.type}`, key: 'type' });
+        if (filters.theme) active.push({ label: `Theme: ${filters.theme}`, key: 'theme' });
+        if (filters.book) active.push({ label: `Book of Bible: ${filters.book}`, key: 'book' });
+        if (filters.tone) active.push({ label: `Tone: ${filters.tone}`, key: 'tone' });
+        if (filters.library !== 'all') active.push({ label: `Library: ${filters.library}`, key: 'library' });
+        if (active.length === 0) return null;
+        const dropped = preFilterCount - filtered.length;
+        return (
+          <div
+            className={`card text-sm ${
+              filtered.length === 0
+                ? 'border-amber-300 bg-amber-50'
+                : 'border-blue-200 bg-blue-50'
+            }`}
+          >
+            <p className={filtered.length === 0 ? 'text-amber-900' : 'text-blue-900'}>
+              {filtered.length === 0
+                ? `Your search found ${preFilterCount} match${preFilterCount === 1 ? '' : 'es'}, but the regular filters below hide them all.`
+                : `Your search found ${preFilterCount}; the regular filters below are hiding ${dropped} of them.`}
+              {filters.book && (
+                <>
+                  {' '}
+                  <strong>Note:</strong> with synoptic-parallels matches in
+                  Mark / Luke / John, the Book of Bible filter can hide
+                  them.
+                </>
+              )}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-xs text-gray-700">Active filters:</span>
+              {active.map((a) => (
+                <span
+                  key={a.key}
+                  className="inline-block text-xs bg-white border border-gray-300 rounded px-2 py-0.5"
+                >
+                  {a.label}
+                </span>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  // Reset everything in the regular filter row, but
+                  // keep the scripture/themes/semantic/parallels search
+                  // intact.
+                  const next = new URLSearchParams(searchParams);
+                  next.delete('q');
+                  next.delete('type');
+                  next.delete('theme');
+                  next.delete('book');
+                  next.delete('tone');
+                  next.delete('lib');
+                  setSearchParams(next, { replace: true });
+                }}
+                className="text-xs btn-secondary"
+              >
+                Clear other filters
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Filters */}
       <div className="card space-y-3">
         <div>
