@@ -118,10 +118,17 @@ export default function ResourceList() {
     return raw ? raw.split('|').filter(Boolean) : [];
   }, [searchParams]);
   const findSemantic = searchParams.get('findSemantic') === '1';
-  // matched-ids set from the most recent FindResourcesByScripture
-  // search. null = no search active; Set = active result. Empty set
-  // means searched but nothing matched (different from null).
+  // Matched results from the most recent FindResourcesByScripture
+  // search. null = no search active; { byScripture, byThemes } where
+  // both are Map<id, string[]> when a search has run. Empty Maps mean
+  // searched-but-nothing-matched (different from null).
   const [scriptureThemeMatches, setScriptureThemeMatches] = useState(null);
+  // Channel filter applied AFTER the search runs:
+  //   'all'      → union of scripture + themes
+  //   'scripture'→ only verse-overlap matches
+  //   'themes'   → only theme matches
+  //   'both'     → intersection (matched by both channels)
+  const [matchFilter, setMatchFilter] = useState('all');
   const [bulkLibraryId, setBulkLibraryId] = useState('');
   const [bulkMoving, setBulkMoving] = useState(false);
   const [bulkError, setBulkError] = useState(null);
@@ -445,14 +452,27 @@ export default function ResourceList() {
     const toneQ = filters.tone.trim().toLowerCase();
     let out = resources.filter((r) => {
       // Scripture/theme search constraint: if a search is active,
-      // restrict to the union of its scripture + theme matches. The
-      // existing filter row still narrows further.
+      // restrict by the active match-channel filter. The existing
+      // filter row still narrows further on top of this.
       if (scriptureThemeMatches) {
-        const union = new Set([
-          ...scriptureThemeMatches.byScripture,
-          ...scriptureThemeMatches.byThemes,
-        ]);
-        if (!union.has(r.id)) return false;
+        const inS = scriptureThemeMatches.byScripture.has(r.id);
+        const inT = scriptureThemeMatches.byThemes.has(r.id);
+        let included = false;
+        switch (matchFilter) {
+          case 'scripture':
+            included = inS;
+            break;
+          case 'themes':
+            included = inT;
+            break;
+          case 'both':
+            included = inS && inT;
+            break;
+          case 'all':
+          default:
+            included = inS || inT;
+        }
+        if (!included) return false;
       }
       if (filters.type !== 'any' && r.resource_type !== filters.type) return false;
       if (filters.library === 'personal' && r.library_id) return false;
@@ -513,7 +533,7 @@ export default function ResourceList() {
       }
     });
     return out;
-  }, [resources, filters, booksByResource, scriptureThemeMatches]);
+  }, [resources, filters, booksByResource, scriptureThemeMatches, matchFilter]);
 
   if (loading) return <LoadingSpinner label="Loading resources…" />;
 
@@ -591,25 +611,67 @@ export default function ResourceList() {
           setSearchParams(next, { replace: true });
           // Only update matched-ids when computeMatches actually ran;
           // an edit of inputs without re-search clears the result so
-          // the count banner doesn't lie.
+          // the count banner doesn't lie. Reset the channel filter
+          // back to "all" when a new search completes — keeping the
+          // previous channel selection across a fresh search is
+          // surprising.
           setScriptureThemeMatches(matched ?? null);
+          if (matched) setMatchFilter('all');
         }}
       />
 
       {scriptureThemeMatches && (
-        <div className="card border-umc-200 bg-umc-50 text-sm">
+        <div className="card border-umc-200 bg-umc-50 text-sm space-y-2">
           {(() => {
             const byS = scriptureThemeMatches.byScripture;
             const byT = scriptureThemeMatches.byThemes;
-            const union = new Set([...byS, ...byT]);
-            const both = [...byS].filter((id) => byT.has(id)).length;
+            const sIds = new Set(byS.keys());
+            const tIds = new Set(byT.keys());
+            const unionCount = new Set([...sIds, ...tIds]).size;
+            const bothCount = [...sIds].filter((id) => tIds.has(id)).length;
+            // Each segment button shows its own count + lights up when active.
+            const segments = [
+              { value: 'all', label: 'All', count: unionCount },
+              {
+                value: 'scripture',
+                label: 'Scripture only',
+                count: sIds.size,
+              },
+              { value: 'themes', label: 'Themes only', count: tIds.size },
+              { value: 'both', label: 'Both', count: bothCount },
+            ];
             return (
-              <p className="text-umc-900">
-                Showing {union.size} match{union.size === 1 ? '' : 'es'}:{' '}
-                <strong>{byS.size}</strong> by scripture overlap,{' '}
-                <strong>{byT.size}</strong> by themes
-                {both > 0 && <> ({both} by both)</>}.
-              </p>
+              <>
+                <p className="text-umc-900">
+                  <strong>{unionCount}</strong> match
+                  {unionCount === 1 ? '' : 'es'} total. Filter results by
+                  channel:
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {segments.map((s) => {
+                    const active = matchFilter === s.value;
+                    const disabled = s.count === 0;
+                    return (
+                      <button
+                        key={s.value}
+                        type="button"
+                        onClick={() => setMatchFilter(s.value)}
+                        disabled={disabled}
+                        className={
+                          'px-3 py-1 rounded text-xs transition ' +
+                          (active
+                            ? 'bg-umc-900 text-white'
+                            : disabled
+                              ? 'bg-white text-gray-400 border border-gray-200 cursor-not-allowed'
+                              : 'bg-white text-umc-900 border border-umc-200 hover:bg-umc-100')
+                        }
+                      >
+                        {s.label} ({s.count})
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
             );
           })()}
         </div>
@@ -814,7 +876,7 @@ export default function ResourceList() {
                         {scriptureThemeMatches?.byScripture.has(r.id) && (
                           <span
                             className="px-1.5 py-0.5 text-[10px] rounded bg-blue-100 text-blue-800"
-                            title="Matched by verse overlap with your scripture reference"
+                            title={`Matched verse(s): ${scriptureThemeMatches.byScripture.get(r.id).join(', ')}`}
                           >
                             scripture
                           </span>
@@ -822,7 +884,7 @@ export default function ResourceList() {
                         {scriptureThemeMatches?.byThemes.has(r.id) && (
                           <span
                             className="px-1.5 py-0.5 text-[10px] rounded bg-emerald-100 text-emerald-800"
-                            title="Matched by theme (semantic match)"
+                            title={`Matched theme(s): ${scriptureThemeMatches.byThemes.get(r.id).join(', ')}`}
                           >
                             themes
                           </span>
@@ -869,6 +931,36 @@ export default function ResourceList() {
                           </span>
                         )}
                       </div>
+                      {scriptureThemeMatches &&
+                        (scriptureThemeMatches.byScripture.has(r.id) ||
+                          scriptureThemeMatches.byThemes.has(r.id)) && (
+                          <div className="mt-2 text-xs flex flex-wrap gap-x-3 gap-y-1">
+                            {scriptureThemeMatches.byScripture.has(r.id) && (
+                              <span>
+                                <span className="text-blue-800 font-medium">
+                                  scripture:
+                                </span>{' '}
+                                <span className="text-gray-700">
+                                  {scriptureThemeMatches.byScripture
+                                    .get(r.id)
+                                    .join(', ')}
+                                </span>
+                              </span>
+                            )}
+                            {scriptureThemeMatches.byThemes.has(r.id) && (
+                              <span>
+                                <span className="text-emerald-800 font-medium">
+                                  themes:
+                                </span>{' '}
+                                <span className="text-gray-700">
+                                  {scriptureThemeMatches.byThemes
+                                    .get(r.id)
+                                    .join(', ')}
+                                </span>
+                              </span>
+                            )}
+                          </div>
+                        )}
                       {r.content && (
                         <p className="mt-2 text-sm text-gray-700 line-clamp-3 whitespace-pre-wrap">
                           {r.content}

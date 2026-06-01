@@ -19,6 +19,7 @@ import {
   suggestThemesFromScripture,
 } from '../lib/claude';
 import {
+  formatRange,
   parseScriptureRanges,
   rangesOverlap,
 } from '../lib/scripture';
@@ -51,32 +52,39 @@ export default function FindResourcesByScripture({
 
   const computeMatches = useCallback(
     async ({ ref, themesList, useSemantic }) => {
-      // matchedIdsByMode: { byScripture: Set, byThemes: Set }
-      const out = { byScripture: new Set(), byThemes: new Set() };
+      // Maps so each row can show WHAT matched, not just IF it matched.
+      //   byScripture: id → string[]  (e.g. ["Matt 9:18-22"])
+      //   byThemes:    id → string[]  (resource themes that matched)
+      const out = { byScripture: new Map(), byThemes: new Map() };
 
-      // Channel 1: verse overlap.
+      // Channel 1: verse overlap. Collect every overlapping range so a
+      // resource tagged with multiple passages shows all the hits.
       if (ref && ref.trim()) {
         const targets = parseScriptureRanges(ref);
         if (targets.length > 0) {
           for (const r of resources) {
             if (!r.scripture_refs) continue;
             const rRanges = parseScriptureRanges(r.scripture_refs);
-            let hit = false;
+            const hits = [];
             for (const rr of rRanges) {
               for (const tr of targets) {
                 if (rangesOverlap(rr, tr)) {
-                  hit = true;
-                  break;
+                  hits.push(formatRange(rr));
+                  break; // count each rr at most once
                 }
               }
-              if (hit) break;
             }
-            if (hit) out.byScripture.add(r.id);
+            if (hits.length > 0) {
+              // Dedupe and trim runaway lists for display.
+              const uniq = Array.from(new Set(hits)).slice(0, 5);
+              out.byScripture.set(r.id, uniq);
+            }
           }
         }
       }
 
-      // Channel 2: theme match.
+      // Channel 2: theme match. Track which resource-themes triggered
+      // the match so we can show them as the explanation.
       const cleanThemes = (themesList || [])
         .map((s) => String(s || '').trim())
         .filter(Boolean);
@@ -96,11 +104,12 @@ export default function FindResourcesByScripture({
           }
         }
         for (const r of resources) {
-          const rThemes = (r.themes || []).map((t) =>
-            String(t || '').trim().toLowerCase()
-          );
-          if (rThemes.some((t) => matchSet.has(t))) {
-            out.byThemes.add(r.id);
+          const rThemes = (r.themes || [])
+            .map((t) => String(t || '').trim())
+            .filter(Boolean);
+          const hits = rThemes.filter((t) => matchSet.has(t.toLowerCase()));
+          if (hits.length > 0) {
+            out.byThemes.set(r.id, hits.slice(0, 8));
           }
         }
       }
@@ -190,7 +199,7 @@ export default function FindResourcesByScripture({
       scriptureRef: '',
       themes: [],
       semantic: false,
-      matched: { byScripture: new Set(), byThemes: new Set() },
+      matched: { byScripture: new Map(), byThemes: new Map() },
     });
   };
 
