@@ -177,6 +177,79 @@ export async function addElementToLiturgy({
 }
 
 /**
+ * Duplicate a whole liturgy into a brand-new draft. Use case: the
+ * pastor wants to adapt last week's order of worship for this week —
+ * keep the old one untouched and start from a full copy.
+ *
+ * Copies:
+ *   - All elements (section_kind, title, body, sort_order, is_announcement)
+ *   - The scripture_refs (good starting point even if it changes)
+ *   - The raw_body (preserves the original import text for re-parse)
+ *   - The notes (often "where used / what was tweaked" — useful context)
+ *
+ * Does NOT copy:
+ *   - used_at (new service = new date — pastor sets it)
+ *   - used_location (likely different service)
+ *   - sermon_liturgy_links (different sermon presumably)
+ *   - external_source / external_guid (this is a NEW row, not a re-import)
+ *
+ * Title gets a "Copy of " prefix unless one's already there.
+ *
+ * Returns the new liturgy id.
+ */
+export async function duplicateLiturgy({
+  ownerUserId,
+  sourceLiturgy,
+  sourceElements,
+}) {
+  if (!ownerUserId) throw new Error('ownerUserId required');
+  if (!sourceLiturgy) throw new Error('sourceLiturgy required');
+
+  const baseTitle = (sourceLiturgy.title || 'Liturgy').trim();
+  const newTitle = /^copy of /i.test(baseTitle)
+    ? baseTitle
+    : `Copy of ${baseTitle}`;
+
+  const { data: created, error: litErr } = await withTimeout(
+    supabase
+      .from('sermon_liturgies')
+      .insert({
+        owner_user_id: ownerUserId,
+        title: newTitle,
+        used_at: null,
+        used_location: null,
+        scripture_refs: sourceLiturgy.scripture_refs || null,
+        raw_body: sourceLiturgy.raw_body || null,
+        notes: sourceLiturgy.notes || null,
+      })
+      .select('id')
+      .single()
+  );
+  if (litErr) throw litErr;
+  const newId = created.id;
+
+  // Copy elements verbatim — preserve sort_order so the new liturgy
+  // visually matches the source.
+  if (Array.isArray(sourceElements) && sourceElements.length > 0) {
+    const copies = sourceElements.map((el) => ({
+      liturgy_id: newId,
+      owner_user_id: ownerUserId,
+      section_kind: el.section_kind || 'other',
+      title: el.title || null,
+      body: el.body || '',
+      sort_order: el.sort_order ?? 0,
+      is_announcement: !!el.is_announcement,
+    }));
+    const { error: secErr } = await withTimeout(
+      supabase.from('sermon_liturgy_sections').insert(copies)
+    );
+    if (secErr) throw secErr;
+  }
+
+  return newId;
+}
+
+/**
  * Reorder helper — swap sort_order between two element rows. Called by
  * up/down arrow buttons in LiturgyElementRow.
  */

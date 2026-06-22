@@ -18,6 +18,7 @@ import {
   addElementToLiturgy,
   swapElementOrder,
   sendElementToNewLiturgy,
+  duplicateLiturgy,
 } from '../lib/liturgyOps';
 import { exportLiturgyDocx } from '../lib/exportLiturgyDocx';
 import { loadLinkedSermonForLiturgy } from '../lib/liturgyInstructions';
@@ -359,6 +360,28 @@ export default function LiturgyDetail() {
     }
   };
 
+  const handleDuplicateLiturgy = async () => {
+    if (
+      !window.confirm(
+        `Create a new liturgy that copies every element from "${liturgy.title}"? The original stays unchanged.`
+      )
+    )
+      return;
+    setBusy(true);
+    setError(null);
+    try {
+      const newId = await duplicateLiturgy({
+        ownerUserId: user.id,
+        sourceLiturgy: liturgy,
+        sourceElements: sections,
+      });
+      navigate(`/liturgies/${newId}`);
+    } catch (e) {
+      setError(e.message || String(e));
+      setBusy(false);
+    }
+  };
+
   const handleExportDocx = async () => {
     setBusy(true);
     setError(null);
@@ -639,6 +662,15 @@ export default function LiturgyDetail() {
                   title="Download the full liturgy as a Word document"
                 >
                   📄 Print to Word
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDuplicateLiturgy}
+                  disabled={busy}
+                  className="btn-secondary text-sm disabled:opacity-50"
+                  title="Create a new liturgy that copies every element from this one — adapt for next week's service"
+                >
+                  📋 Duplicate
                 </button>
                 <button
                   type="button"
