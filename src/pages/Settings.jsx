@@ -27,6 +27,11 @@ export default function Settings() {
           title="Print preferences"
           description="Defaults for the Word manuscript exporter — font, size, line spacing, margins, page numbers, header text."
         />
+        <SettingsCard
+          to="/settings/liturgy-instructions"
+          title="Liturgy drafting instructions"
+          description="Standing instructions Claude follows when drafting each liturgy element type (Call to Worship, Pastoral Prayer, etc.)."
+        />
       </div>
     </div>
   );

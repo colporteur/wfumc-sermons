@@ -1,4 +1,4 @@
-import { Outlet, Link, useNavigate } from 'react-router-dom';
+import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext.jsx';
 import VersionStamp from './VersionStamp.jsx';
 import ScrollRestoration from './ScrollRestoration.jsx';
@@ -6,6 +6,15 @@ import ScrollRestoration from './ScrollRestoration.jsx';
 export default function Layout() {
   const { profile, signOut, session } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // The sermon workspace is a two-column writing surface that benefits
+  // from the full screen width — the manuscript reads better and the
+  // resources / revision chat columns have room to breathe. Other pages
+  // (lists, settings, detail views) stay at the comfortable narrow
+  // column where prose lines aren't 200 characters wide.
+  const isWideRoute = /\/workspace(\/|$)/.test(location.pathname);
+  const mainWidthClass = isWideRoute ? 'max-w-screen-2xl' : 'max-w-5xl';
 
   const handleSignOut = async () => {
     await signOut();
@@ -60,7 +69,7 @@ export default function Layout() {
           )}
         </div>
       </header>
-      <main className="flex-1 max-w-5xl w-full mx-auto px-4 py-6">
+      <main className={`flex-1 ${mainWidthClass} w-full mx-auto px-4 py-6`}>
         <Outlet />
         <VersionStamp />
       </main>

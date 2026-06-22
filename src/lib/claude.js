@@ -2070,3 +2070,229 @@ export async function matchManuscriptToSermon({ filename, snippet, candidates })
     };
   }
 }
+
+// =====================================================================
+// Liturgy drafting (Phase B)
+//
+// generateLiturgyTheme  → spoiler-safe theme summary cached on sermon
+// draftLiturgyElement   → one polished element text from scripture + theme
+// brainstormLiturgyElement → 4–6 short bullet ideas instead of a full draft
+//
+// All three deliberately AVOID using the sermon's stories,
+// illustrations, jokes, quotes — those are sermon "spoilers" the pastor
+// doesn't want leaking into worship elements before the sermon is
+// preached. They only use: scripture, sermon title, the spoiler-safe
+// theme paragraph (which is itself generated to exclude anecdotes), and
+// the pastor's saved per-element-type instructions.
+// =====================================================================
+
+/**
+ * Summarize a sermon manuscript into a spoiler-safe theme paragraph
+ * suitable for use as Claude context when drafting liturgy elements.
+ *
+ * Constraints baked into the prompt:
+ *   - 2–4 sentences total
+ *   - Focuses on the theological / pastoral big idea
+ *   - DOES NOT mention specific stories, anecdotes, jokes, names of
+ *     people in the illustrations, quotes, or other concrete sermon
+ *     content the congregation will hear during the sermon proper
+ *   - DOES mention scripture themes, the call/invitation embedded in
+ *     the sermon, and the emotional tone
+ *
+ * Returns a plain string (no JSON wrapper).
+ */
+export async function generateLiturgyTheme({
+  sermonTitle,
+  scriptureReference,
+  manuscriptText,
+}) {
+  const manuscript = (manuscriptText || '').trim();
+  if (!manuscript) {
+    throw new Error(
+      'No manuscript text to summarize. Write some manuscript first, then try again.'
+    );
+  }
+  const system = [
+    'You write spoiler-safe one-paragraph theme summaries of sermon',
+    'manuscripts. The summary is used to help a pastor draft worship',
+    'liturgy elements (Call to Worship, Pastoral Prayer, Offering',
+    'Statement, Benediction, etc.) that are thematically aligned with',
+    'the sermon WITHOUT giving away the sermon\'s content in advance.',
+    '',
+    'INCLUDE:',
+    '  - The theological / pastoral big idea (1–2 sentences)',
+    '  - Key scriptural themes touched',
+    '  - The invitation / call / response the sermon makes to hearers',
+    '  - Emotional tone (tender, convicting, celebratory, lament, etc.)',
+    '',
+    'EXCLUDE (these are spoilers — the congregation will hear them in',
+    'the sermon proper):',
+    '  - Specific stories, anecdotes, or illustrations',
+    '  - Quotes from named authors or figures',
+    '  - Jokes or punchlines',
+    '  - Names of real people who appear in illustrations',
+    '  - The specific arc / structure / sermon "twist"',
+    '',
+    'Output: 2–4 plain sentences. No headers, no bullets, no JSON.',
+    'Just the paragraph.',
+  ].join('\n');
+
+  const cappedManuscript =
+    manuscript.length > 30000
+      ? manuscript.slice(0, 30000) + '\n…[truncated]'
+      : manuscript;
+
+  const userParts = [];
+  if (sermonTitle) userParts.push(`Sermon title: ${sermonTitle}`);
+  if (scriptureReference) userParts.push(`Scripture: ${scriptureReference}`);
+  userParts.push(`Manuscript:\n${cappedManuscript}`);
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userParts.join('\n\n') }],
+      max_tokens: 600,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(response).trim();
+  if (!text) {
+    throw new Error('Claude returned an empty theme summary.');
+  }
+  return text;
+}
+
+/**
+ * Draft a single liturgy element (Call to Worship, Pastoral Prayer,
+ * Offering Statement, etc.) based on the liturgy's scripture(s), the
+ * spoiler-safe sermon theme (optional), the element type, and the
+ * pastor's saved instructions for that element type.
+ *
+ * Returns the drafted text as a plain string (no JSON wrapper).
+ */
+export async function draftLiturgyElement({
+  elementType,
+  elementLabel,
+  scriptureRefs,
+  sermonTheme = '',
+  pastorInstructions = '',
+}) {
+  if (!elementLabel) throw new Error('elementLabel is required');
+
+  const system = [
+    `You draft a single ${elementLabel} for a United Methodist worship`,
+    'service. Write something the pastor can read aloud (or adapt) on',
+    'Sunday morning.',
+    '',
+    'Guidelines:',
+    '  - Match the appropriate length and form for this element type.',
+    '    Call to Worship: 4–10 short lines, often responsive (Leader /',
+    '    People). Pastoral Prayer: 2–4 paragraphs of plain prose.',
+    '    Offering Statement: 2–4 sentences. Benediction: 1–3 short',
+    '    lines. Children\'s Moment: a short script with concrete imagery.',
+    '    Match each element type\'s native length and rhythm.',
+    '  - Use accessible, warm, theologically grounded language. UMC',
+    '    sensibility: open table, social-holiness aware, Christ-centered.',
+    '  - Anchor in the scripture given.',
+    '  - If a spoiler-safe sermon theme is provided, let it shape the',
+    '    emotional tone and thematic direction. DO NOT reproduce',
+    '    specific stories, jokes, illustrations, or quotes from the',
+    '    sermon — the congregation has not heard the sermon yet.',
+    '  - Plain text only. No headers, no markdown, no JSON.',
+    '  - For responsive elements, use "Leader:" and "People:" prefixes.',
+  ].join('\n');
+
+  const userParts = [];
+  if (scriptureRefs) userParts.push(`Scripture: ${scriptureRefs}`);
+  if (sermonTheme) {
+    userParts.push(
+      `Spoiler-safe sermon theme (the pastor\'s big idea — use to shape tone, do NOT reproduce specifics):\n${sermonTheme}`
+    );
+  }
+  if (pastorInstructions && pastorInstructions.trim()) {
+    userParts.push(
+      `Pastor\'s standing instructions for ${elementLabel}:\n${pastorInstructions.trim()}`
+    );
+  }
+  userParts.push(`Now draft the ${elementLabel}.`);
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userParts.join('\n\n') }],
+      max_tokens: 1200,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(response).trim();
+  if (!text) throw new Error('Claude returned an empty draft.');
+  return text;
+}
+
+/**
+ * Brainstorm variant: same inputs as draftLiturgyElement but returns
+ * 4–6 short alternative ideas (one short paragraph each) the pastor
+ * can pick from instead of one polished draft. Returns Array<string>.
+ */
+export async function brainstormLiturgyElement({
+  elementType,
+  elementLabel,
+  scriptureRefs,
+  sermonTheme = '',
+  pastorInstructions = '',
+}) {
+  if (!elementLabel) throw new Error('elementLabel is required');
+
+  const system = [
+    `You generate 4–6 alternative DRAFT IDEAS for a single ${elementLabel}`,
+    'in a United Methodist worship service. Each idea is a quick',
+    'short-form sketch the pastor can choose from or build on.',
+    '',
+    'Guidelines:',
+    '  - Each idea should be 1–3 short sentences (a sketch, not a',
+    '    polished element).',
+    '  - Each idea should take a DIFFERENT angle on the scripture and',
+    '    theme so the pastor has real choice.',
+    '  - Match the element type\'s native form (responsive, prose,',
+    '    short benediction line, etc.).',
+    '  - Anchor in the scripture provided.',
+    '  - If a spoiler-safe theme is provided, shape tone with it but',
+    '    do NOT reproduce specific stories, illustrations, or quotes',
+    '    from the sermon.',
+    '',
+    'Output a JSON array of strings — one short idea per element.',
+    'Example: ["Idea 1 here…", "Idea 2 here…", …]',
+    'No prose around the array. No code fence.',
+  ].join('\n');
+
+  const userParts = [];
+  if (scriptureRefs) userParts.push(`Scripture: ${scriptureRefs}`);
+  if (sermonTheme) {
+    userParts.push(
+      `Spoiler-safe sermon theme:\n${sermonTheme}`
+    );
+  }
+  if (pastorInstructions && pastorInstructions.trim()) {
+    userParts.push(
+      `Pastor\'s standing instructions for ${elementLabel}:\n${pastorInstructions.trim()}`
+    );
+  }
+  userParts.push(`Now produce 4–6 brainstorm ideas for the ${elementLabel}.`);
+
+  const response = await callClaude(
+    {
+      system,
+      messages: [{ role: 'user', content: userParts.join('\n\n') }],
+      max_tokens: 1500,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(response);
+  const parsed = parseJsonArrayLoose(text);
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('Claude returned no usable brainstorm ideas.');
+  }
+  return parsed
+    .filter((s) => typeof s === 'string' && s.trim())
+    .map((s) => s.trim());
+}

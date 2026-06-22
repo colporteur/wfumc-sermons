@@ -744,7 +744,7 @@ export default function SermonWorkspace() {
   }
 
   return (
-    <div className="space-y-3 max-w-7xl">
+    <div className="space-y-3">
       {/* Top bar */}
       <div className="flex flex-wrap items-baseline justify-between gap-3">
         <div className="min-w-0">
@@ -865,9 +865,15 @@ export default function SermonWorkspace() {
         onExplore={(r) => setExploreInitialResources([r])}
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      {/* Chat (2/5) + Manuscript (3/5) on wide screens — manuscript is
+          the writing surface and gets the bigger pane. Stacks 1-col on
+          narrow screens. */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         {/* Chat pane */}
-        <div className="card flex flex-col" style={{ minHeight: '70vh' }}>
+        <div
+          className="card flex flex-col lg:col-span-2"
+          style={{ minHeight: '70vh' }}
+        >
           <div className="flex items-baseline justify-between gap-2 mb-2">
             <h2 className="font-serif text-lg text-umc-900">Revision chat</h2>
             <button
@@ -949,7 +955,10 @@ export default function SermonWorkspace() {
         </div>
 
         {/* Manuscript pane */}
-        <div className="card flex flex-col" style={{ minHeight: '70vh' }}>
+        <div
+          className="card flex flex-col lg:col-span-3"
+          style={{ minHeight: '70vh' }}
+        >
           <div className="flex items-baseline justify-between gap-2 mb-2 flex-wrap">
             <h2 className="font-serif text-lg text-umc-900">
               Manuscript
@@ -995,7 +1004,10 @@ export default function SermonWorkspace() {
               "The manuscript will appear here. Hand-edit freely between Claude turns — your edits are preserved and Claude sees them on the next turn."
             }
             textareaClassName={
-              'w-full input font-serif text-sm leading-relaxed ' +
+              // text-base on wide screens for easier reading at the
+              // wider column width; text-sm on narrow screens to keep
+              // lines from feeling cramped.
+              'w-full input font-serif text-sm lg:text-base leading-relaxed ' +
               (isLocked ? 'bg-gray-50 text-gray-700 cursor-default' : '')
             }
             textareaStyle={{ minHeight: '60vh' }}

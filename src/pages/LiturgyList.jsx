@@ -110,8 +110,14 @@ export default function LiturgyList() {
             </Link>
           )}
           <Link
-            to="/liturgies/import"
+            to="/liturgies/new"
             className="btn-primary text-sm whitespace-nowrap"
+          >
+            + New liturgy
+          </Link>
+          <Link
+            to="/liturgies/import"
+            className="btn-secondary text-sm whitespace-nowrap"
           >
             + Import .enex
           </Link>

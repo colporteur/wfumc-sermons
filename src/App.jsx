@@ -16,9 +16,11 @@ import ImportResources from './pages/ImportResources.jsx';
 import LiturgyList from './pages/LiturgyList.jsx';
 import LiturgyDetail from './pages/LiturgyDetail.jsx';
 import LiturgyImport from './pages/LiturgyImport.jsx';
+import LiturgyNew from './pages/LiturgyNew.jsx';
 import LiturgyReview from './pages/LiturgyReview.jsx';
 import VoiceGuide from './pages/VoiceGuide.jsx';
 import PrintPreferences from './pages/PrintPreferences.jsx';
+import LiturgyInstructions from './pages/LiturgyInstructions.jsx';
 import Settings from './pages/Settings.jsx';
 import SermonWorkspace from './pages/SermonWorkspace.jsx';
 import SermonNewWorkspace from './pages/SermonNewWorkspace.jsx';
@@ -57,12 +59,17 @@ export default function App() {
         <Route path="/import-resources" element={<ImportResources />} />
         <Route path="/import" element={<Import />} />
         <Route path="/liturgies" element={<LiturgyList />} />
+        <Route path="/liturgies/new" element={<LiturgyNew />} />
         <Route path="/liturgies/import" element={<LiturgyImport />} />
         <Route path="/liturgies/review" element={<LiturgyReview />} />
         <Route path="/liturgies/:id" element={<LiturgyDetail />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/settings/voice" element={<VoiceGuide />} />
         <Route path="/settings/print" element={<PrintPreferences />} />
+        <Route
+          path="/settings/liturgy-instructions"
+          element={<LiturgyInstructions />}
+        />
       </Route>
       <Route path="*" element={<NotFound />} />
     </Routes>

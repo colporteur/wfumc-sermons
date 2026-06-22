@@ -10,6 +10,17 @@ import {
 } from '../lib/liturgyMatch';
 import SendToBulletinModal from '../components/SendToBulletinModal.jsx';
 import TypeaheadSearch from '../components/TypeaheadSearch.jsx';
+import LiturgyElementRow from '../components/LiturgyElementRow.jsx';
+import AddElementPicker from '../components/AddElementPicker.jsx';
+import LiturgyElementDraftModal from '../components/LiturgyElementDraftModal.jsx';
+import LiturgyElementBrainstormModal from '../components/LiturgyElementBrainstormModal.jsx';
+import {
+  addElementToLiturgy,
+  swapElementOrder,
+  sendElementToNewLiturgy,
+} from '../lib/liturgyOps';
+import { exportLiturgyDocx } from '../lib/exportLiturgyDocx';
+import { loadLinkedSermonForLiturgy } from '../lib/liturgyInstructions';
 
 export default function LiturgyDetail() {
   const { id } = useParams();
@@ -22,7 +33,7 @@ export default function LiturgyDetail() {
   const [links, setLinks] = useState([]); // sermon link rows + sermon info
   const [showAnnouncements, setShowAnnouncements] = useState(false);
   const [editingMeta, setEditingMeta] = useState(false);
-  const [draft, setDraft] = useState({ title: '', used_at: '', used_location: '', notes: '' });
+  const [draft, setDraft] = useState({ title: '', used_at: '', used_location: '', scripture_refs: '', notes: '' });
   const [busy, setBusy] = useState(false);
   const [reparsing, setReparsing] = useState(false);
   // On-demand suggestion panels — populated when the user clicks
@@ -32,6 +43,13 @@ export default function LiturgyDetail() {
   const [scriptureSuggestions, setScriptureSuggestions] = useState(null);
   const [searchingMatches, setSearchingMatches] = useState(false);
   const [sendModal, setSendModal] = useState(null); // section being sent
+  const [draftElement, setDraftElement] = useState(null); // element being drafted
+  const [brainstormElement, setBrainstormElement] = useState(null); // element being brainstormed
+  // Linked sermon with manuscript_text + liturgy_theme — loaded
+  // separately from the lighter `links` list so we don't drag manuscript
+  // bytes around for every page load. Populated when a draft/brainstorm
+  // modal opens (or eagerly on page load when there's a linked sermon).
+  const [linkedSermon, setLinkedSermon] = useState(null);
 
   const reload = async () => {
     if (!user?.id || !id) return;
@@ -75,6 +93,7 @@ export default function LiturgyDetail() {
         title: litRes.data.title || '',
         used_at: litRes.data.used_at || '',
         used_location: litRes.data.used_location || '',
+        scripture_refs: litRes.data.scripture_refs || '',
         notes: litRes.data.notes || '',
       });
     } catch (e) {
@@ -88,6 +107,29 @@ export default function LiturgyDetail() {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, user?.id]);
+
+  // Whenever the liturgy + links finish loading, refresh the
+  // linkedSermon record (with manuscript_text + cached liturgy_theme)
+  // so the draft/brainstorm modals open instantly with context.
+  useEffect(() => {
+    let cancelled = false;
+    if (!id || !links.length) {
+      setLinkedSermon(null);
+      return undefined;
+    }
+    (async () => {
+      try {
+        const sermon = await loadLinkedSermonForLiturgy(id);
+        if (!cancelled) setLinkedSermon(sermon);
+      } catch (e) {
+        // Non-fatal — drafting still works without sermon context.
+        console.warn('Could not preload linked sermon:', e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, links.length]);
 
   if (loading) return <LoadingSpinner label="Loading liturgy…" />;
   if (error)
@@ -119,6 +161,7 @@ export default function LiturgyDetail() {
             title: draft.title.trim() || liturgy.title,
             used_at: draft.used_at || null,
             used_location: draft.used_location.trim() || null,
+            scripture_refs: draft.scripture_refs.trim() || null,
             notes: draft.notes.trim() || null,
           })
           .eq('id', liturgy.id)
@@ -197,6 +240,134 @@ export default function LiturgyDetail() {
       setError(e.message || String(e));
     } finally {
       setReparsing(false);
+    }
+  };
+
+  // ---- Element-level handlers ----
+
+  const handleSaveElementBody = async (elementId, newBody, newTitle) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: err } = await withTimeout(
+        supabase
+          .from('sermon_liturgy_sections')
+          .update({
+            body: newBody,
+            title: newTitle?.trim() || null,
+          })
+          .eq('id', elementId)
+      );
+      if (err) throw err;
+      await reload();
+    } catch (e) {
+      setError(e.message || String(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteElement = async (elementId) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: err } = await withTimeout(
+        supabase
+          .from('sermon_liturgy_sections')
+          .delete()
+          .eq('id', elementId)
+      );
+      if (err) throw err;
+      await reload();
+    } catch (e) {
+      setError(e.message || String(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMoveUp = async (element) => {
+    const visible = sections.filter((s) => showAnnouncements || !s.is_announcement);
+    const idx = visible.findIndex((s) => s.id === element.id);
+    if (idx <= 0) return;
+    const prev = visible[idx - 1];
+    setBusy(true);
+    try {
+      await swapElementOrder(element, prev);
+      await reload();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleMoveDown = async (element) => {
+    const visible = sections.filter((s) => showAnnouncements || !s.is_announcement);
+    const idx = visible.findIndex((s) => s.id === element.id);
+    if (idx === -1 || idx >= visible.length - 1) return;
+    const next = visible[idx + 1];
+    setBusy(true);
+    try {
+      await swapElementOrder(element, next);
+      await reload();
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleAddElement = async (elementKey) => {
+    const currentSortMax = sections.reduce(
+      (m, s) => Math.max(m, s.sort_order ?? 0),
+      -1
+    );
+    setBusy(true);
+    setError(null);
+    try {
+      await addElementToLiturgy({
+        liturgyId: liturgy.id,
+        ownerUserId: user.id,
+        elementKey,
+        currentSortMax,
+      });
+      await reload();
+    } catch (e) {
+      setError(e.message || String(e));
+      throw e;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleSendElementToNewLiturgy = async (element) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const newId = await sendElementToNewLiturgy({
+        ownerUserId: user.id,
+        sourceElement: element,
+      });
+      navigate(`/liturgies/${newId}`);
+    } catch (e) {
+      setError(e.message || String(e));
+      setBusy(false);
+      throw e;
+    }
+  };
+
+  const handleExportDocx = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await exportLiturgyDocx({ liturgy, sections, showAnnouncements });
+    } catch (e) {
+      setError(e.message || String(e));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -393,6 +564,21 @@ export default function LiturgyDetail() {
               </div>
             </div>
             <div>
+              <label className="label">Scripture reference(s)</label>
+              <input
+                type="text"
+                className="input"
+                value={draft.scripture_refs}
+                onChange={(e) =>
+                  setDraft({ ...draft, scripture_refs: e.target.value })
+                }
+                placeholder="Matthew 9:9-13; Hosea 6:6"
+              />
+              <p className="text-[11px] text-gray-500 mt-1">
+                Used by Claude when drafting elements. Semicolon-separate multiple refs.
+              </p>
+            </div>
+            <div>
               <label className="label">Notes</label>
               <textarea
                 className="input min-h-[60px]"
@@ -430,6 +616,12 @@ export default function LiturgyDetail() {
                   {liturgy.used_location && (
                     <span> · {liturgy.used_location}</span>
                   )}
+                  {liturgy.scripture_refs && (
+                    <span>
+                      {liturgy.used_at || liturgy.used_location ? ' · ' : ''}
+                      {liturgy.scripture_refs}
+                    </span>
+                  )}
                   {liturgy.original_created_at && !liturgy.used_at && (
                     <span>
                       Imported from{' '}
@@ -438,7 +630,16 @@ export default function LiturgyDetail() {
                   )}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-center flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleExportDocx}
+                  disabled={busy}
+                  className="btn-secondary text-sm disabled:opacity-50"
+                  title="Download the full liturgy as a Word document"
+                >
+                  📄 Print to Word
+                </button>
                 <button
                   type="button"
                   onClick={() => setEditingMeta(true)}
@@ -569,11 +770,11 @@ export default function LiturgyDetail() {
         )}
       </div>
 
-      {/* Sections */}
+      {/* Elements */}
       <div className="card">
         <div className="flex items-baseline justify-between gap-2 flex-wrap">
           <h2 className="font-serif text-lg text-umc-900">
-            Sections ({sections.length})
+            Elements ({sections.length})
           </h2>
           <div className="flex items-center gap-3 text-xs">
             {hiddenAnnouncementCount > 0 && (
@@ -583,57 +784,57 @@ export default function LiturgyDetail() {
                   checked={showAnnouncements}
                   onChange={(e) => setShowAnnouncements(e.target.checked)}
                 />
-                Show {hiddenAnnouncementCount} announcement section
+                Show {hiddenAnnouncementCount} announcement element
                 {hiddenAnnouncementCount === 1 ? '' : 's'}
               </label>
             )}
-            <button
-              type="button"
-              onClick={reparse}
-              disabled={reparsing}
-              className="text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
-            >
-              {reparsing
-                ? 'Re-parsing…'
-                : sections.length === 0
-                  ? '✨ Parse with Claude'
-                  : '✨ Re-parse'}
-            </button>
+            {liturgy.raw_body && (
+              <button
+                type="button"
+                onClick={reparse}
+                disabled={reparsing}
+                className="text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+              >
+                {reparsing
+                  ? 'Re-parsing…'
+                  : sections.length === 0
+                    ? '✨ Parse with Claude'
+                    : '✨ Re-parse'}
+              </button>
+            )}
           </div>
         </div>
         {visibleSections.length === 0 ? (
           <p className="text-sm text-gray-500 italic mt-2">
             {sections.length === 0
-              ? "Not parsed into sections yet — click 'Parse with Claude' above."
-              : 'All sections are flagged as announcements (hidden by default).'}
+              ? 'No elements yet — add one below.'
+              : 'All elements are flagged as announcements (hidden by default).'}
           </p>
         ) : (
           <ul className="mt-3 space-y-3">
-            {visibleSections.map((s) => (
-              <li key={s.id} className="border-t border-gray-100 pt-3">
-                <div className="flex items-baseline justify-between gap-2 flex-wrap">
-                  <p className="font-serif text-base text-umc-900">
-                    <span className="text-[10px] uppercase tracking-wide text-gray-500 mr-2">
-                      {s.section_kind}
-                    </span>
-                    {s.title || ''}
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setSendModal(s)}
-                    className="text-xs text-umc-700 hover:text-umc-900 underline whitespace-nowrap"
-                    title="Send this section to a draft or upcoming bulletin"
-                  >
-                    → Send to bulletin
-                  </button>
-                </div>
-                <p className="mt-1 text-sm text-gray-800 whitespace-pre-wrap font-serif leading-relaxed">
-                  {s.body}
-                </p>
-              </li>
+            {visibleSections.map((s, idx) => (
+              <LiturgyElementRow
+                key={s.id}
+                element={s}
+                isFirst={idx === 0}
+                isLast={idx === visibleSections.length - 1}
+                busy={busy}
+                onSaveBody={handleSaveElementBody}
+                onDelete={handleDeleteElement}
+                onMoveUp={handleMoveUp}
+                onMoveDown={handleMoveDown}
+                onSendToBulletin={(el) => setSendModal(el)}
+                onSendToNewLiturgy={handleSendElementToNewLiturgy}
+                onDraftClaude={(el) => setDraftElement(el)}
+                onBrainstormClaude={(el) => setBrainstormElement(el)}
+                scriptureRefs={liturgy.scripture_refs || ''}
+              />
             ))}
           </ul>
         )}
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <AddElementPicker onAdd={handleAddElement} busy={busy} />
+        </div>
       </div>
 
       {/* Raw body */}
@@ -652,6 +853,50 @@ export default function LiturgyDetail() {
         <SendToBulletinModal
           section={sendModal}
           onClose={() => setSendModal(null)}
+        />
+      )}
+
+      {draftElement && (
+        <LiturgyElementDraftModal
+          element={draftElement}
+          scriptureRefs={liturgy.scripture_refs || ''}
+          linkedSermon={linkedSermon}
+          ownerUserId={user.id}
+          onApply={async (newBody) => {
+            try {
+              await handleSaveElementBody(
+                draftElement.id,
+                newBody,
+                draftElement.title || ''
+              );
+              setDraftElement(null);
+            } catch {
+              /* error already surfaced */
+            }
+          }}
+          onClose={() => setDraftElement(null)}
+        />
+      )}
+
+      {brainstormElement && (
+        <LiturgyElementBrainstormModal
+          element={brainstormElement}
+          scriptureRefs={liturgy.scripture_refs || ''}
+          linkedSermon={linkedSermon}
+          ownerUserId={user.id}
+          onApply={async (ideaText) => {
+            try {
+              await handleSaveElementBody(
+                brainstormElement.id,
+                ideaText,
+                brainstormElement.title || ''
+              );
+              setBrainstormElement(null);
+            } catch {
+              /* error already surfaced */
+            }
+          }}
+          onClose={() => setBrainstormElement(null)}
         />
       )}
     </div>
