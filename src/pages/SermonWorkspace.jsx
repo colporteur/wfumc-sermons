@@ -19,6 +19,12 @@ import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 import WorkspaceExtractResources from '../components/WorkspaceExtractResources.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
+import ManuscriptModelPicker from '../components/ManuscriptModelPicker.jsx';
+import {
+  loadManuscriptModelKey,
+  saveManuscriptModelKey,
+  modelIdForKey,
+} from '../lib/manuscriptModel';
 import ManuscriptEditor, {
   ParagraphNumberToggle,
 } from '../components/ManuscriptEditor.jsx';
@@ -176,6 +182,16 @@ export default function SermonWorkspace() {
   });
   const [reviseSelOpen, setReviseSelOpen] = useState(false);
   const [reviseSelSnapshot, setReviseSelSnapshot] = useState(null);
+  // Per-pastor choice of Claude model for manuscript revisions.
+  // Persists in localStorage; only affects reviseSermonManuscript and
+  // reviseManuscriptSnippet (not Brainstorm / slide suggester / etc.).
+  const [manuscriptModelKey, setManuscriptModelKey] = useState(() =>
+    loadManuscriptModelKey()
+  );
+  const handleManuscriptModelChange = (newKey) => {
+    setManuscriptModelKey(newKey);
+    saveManuscriptModelKey(newKey);
+  };
   useEffect(() => {
     try {
       sessionStorage.setItem(
@@ -403,6 +419,7 @@ export default function SermonWorkspace() {
           .filter((m) => m.kind !== 'note')
           .map((m) => ({ role: m.role, content: m.content })),
         instruction,
+        model: modelIdForKey(manuscriptModelKey),
       });
 
       if (!revised || !revised.trim()) {
@@ -874,7 +891,7 @@ export default function SermonWorkspace() {
           className="card flex flex-col lg:col-span-2"
           style={{ minHeight: '70vh' }}
         >
-          <div className="flex items-baseline justify-between gap-2 mb-2">
+          <div className="flex items-baseline justify-between gap-2 mb-1 flex-wrap">
             <h2 className="font-serif text-lg text-umc-900">Revision chat</h2>
             <button
               type="button"
@@ -883,6 +900,13 @@ export default function SermonWorkspace() {
             >
               Clear
             </button>
+          </div>
+          <div className="mb-2">
+            <ManuscriptModelPicker
+              value={manuscriptModelKey}
+              onChange={handleManuscriptModelChange}
+              disabled={sending}
+            />
           </div>
           <div className="flex-1 overflow-y-auto pr-1 space-y-2">
             {messages.length === 0 && !sending && (
@@ -1145,6 +1169,7 @@ export default function SermonWorkspace() {
         fullManuscript={manuscript || ''}
         sermon={sermon}
         voiceSystemPrompt={voicePrompt}
+        model={modelIdForKey(manuscriptModelKey)}
         onReplace={(revised) => {
           if (!reviseSelSnapshot) return;
           const before = (manuscript || '').slice(0, reviseSelSnapshot.start);

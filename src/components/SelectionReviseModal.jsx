@@ -23,6 +23,10 @@ export default function SelectionReviseModal({
   sermon,
   voiceSystemPrompt = '',
   onReplace,
+  // Forwarded straight to reviseManuscriptSnippet. Workspace passes the
+  // pastor's manuscript-model choice here so the highlight-and-revise
+  // flow uses the same model as the chat-revise flow.
+  model = null,
 }) {
   const [instruction, setInstruction] = useState('');
   const [includeFullManuscript, setIncludeFullManuscript] = useState(false);
@@ -67,6 +71,7 @@ export default function SelectionReviseModal({
         // actually have one to send.
         fullManuscript:
           includeFullManuscript && fullManuscript ? fullManuscript : '',
+        model,
       });
       setResult(revised);
     } catch (e) {

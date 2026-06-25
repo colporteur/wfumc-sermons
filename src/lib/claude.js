@@ -1217,6 +1217,11 @@ export async function reviseSermonManuscript({
   resourcesContext = '',
   history = [],
   instruction,
+  // Optional override of the claude-proxy default model. The Workspace
+  // exposes a picker that lets the pastor swap between Sonnet 4.6
+  // (default) and Opus for the manuscript work specifically. Other
+  // calls (Brainstorm, slide suggester, etc.) keep the proxy default.
+  model = null,
 }) {
   if (!instruction || !instruction.trim()) {
     throw new Error('Tell Claude what to change.');
@@ -1300,6 +1305,7 @@ export async function reviseSermonManuscript({
       system: systemParts.join('\n\n'),
       messages,
       max_tokens: 16000,
+      ...(model ? { model } : {}),
     },
     { timeoutMs: 240000 }
   );
@@ -1325,6 +1331,9 @@ export async function reviseManuscriptSnippet({
   voiceSystemPrompt = '',
   sermon,
   fullManuscript = '',
+  // Same per-call model override as reviseSermonManuscript — lets the
+  // Workspace's model picker apply to the highlight-and-revise flow too.
+  model = null,
 }) {
   if (!snippet || !snippet.trim()) {
     throw new Error('Nothing selected to revise.');
@@ -1400,6 +1409,7 @@ export async function reviseManuscriptSnippet({
       system: systemParts.join('\n\n'),
       messages: [{ role: 'user', content: userMessage }],
       max_tokens: 4000,
+      ...(model ? { model } : {}),
     },
     { timeoutMs: 120000 }
   );
