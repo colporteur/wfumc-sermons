@@ -20,10 +20,12 @@ export default function InsertScriptureSentencePanel({
   scriptureRefs,
   onInsert,
 }) {
-  const refs = (scriptureRefs || '')
-    .split(/[;\n]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // Split on ; / newline AND expand abbreviated chunks. The pastor
+  // routinely writes refs like "Matthew 11:16-19; 25-30" where the
+  // second chunk inherits "Matthew" and "11" from the first. Without
+  // this expansion, sending "25-30" to Claude is ambiguous and
+  // produces wrong results.
+  const refs = expandRefChunks(scriptureRefs || '');
 
   const [open, setOpen] = useState(false);
   const [loadingRef, setLoadingRef] = useState(null);
@@ -146,4 +148,59 @@ export default function InsertScriptureSentencePanel({
       </div>
     </div>
   );
+}
+
+// Parse a free-form scripture-refs string into an array of fully-
+// qualified references. Subsequent ;-separated chunks inherit the book
+// (and optionally chapter) from the prior chunk when omitted, matching
+// how pastors actually write composite refs like:
+//
+//   "Matthew 11:16-19; 25-30"     → ["Matthew 11:16-19", "Matthew 11:25-30"]
+//   "Luke 15:1-7; 11-32"          → ["Luke 15:1-7", "Luke 15:11-32"]
+//   "John 3:16; 4:14"             → ["John 3:16", "John 4:14"]
+//   "Romans 8:28; Hosea 6:6"      → ["Romans 8:28", "Hosea 6:6"]
+//   "Matt 9:9-13; Hos 6:6; 11:1"  → ["Matt 9:9-13", "Hos 6:6", "Hos 11:1"]
+//
+// Chunks that start with a letter (or leading 1/2/3 + letter, e.g.
+// "1 John 4:7") reset both book and chapter. Chunks starting with a
+// number+colon ("4:14") inherit the book only. Bare verse-range chunks
+// ("25-30") inherit both.
+export function expandRefChunks(input) {
+  const chunks = (input || '')
+    .split(/[;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out = [];
+  let lastBook = null;
+  let lastChapter = null;
+  // Full ref pattern: optional 1/2/3 prefix, book name (letters + spaces),
+  // chapter, optional ":verses".
+  const FULL = /^(\d?\s*[A-Za-z][A-Za-z. ]*?)\s+(\d+)(?::(.+))?$/;
+  // Chapter:verses with no book: "4:14" or "11:1-7"
+  const CHAP_VERSES = /^(\d+):(.+)$/;
+  // Bare verses: "25-30", "11", "1, 3-5"
+  const VERSES_ONLY = /^[\d,\s-]+$/;
+  for (const chunk of chunks) {
+    const full = chunk.match(FULL);
+    if (full) {
+      lastBook = full[1].trim();
+      lastChapter = full[2];
+      out.push(chunk);
+      continue;
+    }
+    const cv = chunk.match(CHAP_VERSES);
+    if (cv && lastBook) {
+      lastChapter = cv[1];
+      out.push(`${lastBook} ${cv[1]}:${cv[2].trim()}`);
+      continue;
+    }
+    if (VERSES_ONLY.test(chunk) && lastBook && lastChapter) {
+      out.push(`${lastBook} ${lastChapter}:${chunk}`);
+      continue;
+    }
+    // Couldn't categorize — pass through unchanged so Claude sees it as-is.
+    // (Better than silently dropping a chunk the pastor wrote.)
+    out.push(chunk);
+  }
+  return out;
 }
