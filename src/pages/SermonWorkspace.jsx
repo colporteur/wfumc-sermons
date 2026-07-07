@@ -18,6 +18,7 @@ import WorkspaceSlides from '../components/WorkspaceSlides.jsx';
 import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 import WorkspaceExtractResources from '../components/WorkspaceExtractResources.jsx';
+import CreativeStudio from '../components/CreativeStudio.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import ManuscriptModelPicker from '../components/ManuscriptModelPicker.jsx';
 import {
@@ -151,6 +152,10 @@ export default function SermonWorkspace() {
   // Mirrors /resources/extract but lives inside the workspace and lets
   // the pastor route each extracted row to this sermon vs archive-only.
   const [extractOpen, setExtractOpen] = useState(false);
+
+  // Overlay: ✨ Creative Studio — brainstorm/draft panel grounded in the
+  // pastor's sermon-tips method (see lib/creativeTechniques.js).
+  const [studioOpen, setStudioOpen] = useState(false);
   const exploreOpen = exploreInitialResources.length > 0;
 
   // Composer state
@@ -821,6 +826,14 @@ export default function SermonWorkspace() {
           >
             ✨ Extract resources
           </button>
+          <button
+            type="button"
+            onClick={() => setStudioOpen(true)}
+            className="btn-secondary text-xs whitespace-nowrap"
+            title="Open the Creative Studio — brainstorm prompts and draft copy grounded in your sermon-craft method, resources, and technique cards."
+          >
+            ✨ Creative Studio
+          </button>
           {isLocked ? (
             <>
               <span className="text-umc-700 font-medium">
@@ -1089,6 +1102,29 @@ export default function SermonWorkspace() {
           // override params bypass the React-state-flush race that
           // setting draftInstruction + setTimeout would otherwise hit.
           handleSendInstruction(instruction, resources);
+        }}
+      />
+
+      <CreativeStudio
+        open={studioOpen}
+        onClose={() => setStudioOpen(false)}
+        sermon={sermon}
+        manuscript={manuscript}
+        voicePrompt={voicePrompt}
+        onInsertDraft={(text) => {
+          if (isLocked) {
+            // Finalized manuscripts don't take insertions — mirror the
+            // revise paths' behavior. The Studio's Stash path still works.
+            window.alert(
+              'This manuscript is finalized. Unlock it to insert, or use "Stash for later".'
+            );
+            return;
+          }
+          const body = (text || '').trim();
+          if (!body) return;
+          setManuscript((cur) =>
+            cur && cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + body + '\n' : body + '\n'
+          );
         }}
       />
 
