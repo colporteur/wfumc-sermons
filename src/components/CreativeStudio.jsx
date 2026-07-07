@@ -28,6 +28,12 @@ import {
   modeLabel,
 } from '../lib/creativeStudio';
 import { createStashedBlock } from '../lib/sermonStashedBlocks';
+import {
+  listBackgroundDocs,
+  uploadBackgroundDoc,
+  deleteBackgroundDoc,
+  buildBackgroundDocsContext,
+} from '../lib/backgroundDocs';
 
 // Creative Studio — full-screen brainstorming overlay for the Sermon
 // Workspace. Operationalizes the pastor's twelve sermon-tips documents
@@ -86,6 +92,13 @@ export default function CreativeStudio({
   const [resSearching, setResSearching] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
 
+  // Background documents (Phase 2). Rows carry a per-session _on toggle
+  // (default on) and an in-memory _visionCache the context builder
+  // fills so repeated turns don't re-download/re-render.
+  const [bgDocs, setBgDocs] = useState([]);
+  const [bgUploading, setBgUploading] = useState(false);
+  const fileInputRef = useRef(null);
+
   // ---- composer -----------------------------------------------------
   const [instruction, setInstruction] = useState('');
   const [sending, setSending] = useState(false);
@@ -118,6 +131,25 @@ export default function CreativeStudio({
         if (!cancelled) setError(e.message);
       } finally {
         if (!cancelled) setLoadingSessions(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sermon?.id]);
+
+  // Load background documents on open.
+  useEffect(() => {
+    if (!open || !sermon?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await listBackgroundDocs(sermon.id);
+        if (!cancelled) {
+          setBgDocs(rows.map((r) => ({ ...r, _on: true })));
+        }
+      } catch (e) {
+        if (!cancelled) setError(e.message);
       }
     })();
     return () => {
@@ -210,6 +242,55 @@ export default function CreativeStudio({
     setResources((cur) => cur.filter((r) => r.id !== id));
   }
 
+  async function handleUploadFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setBgUploading(true);
+    setError(null);
+    try {
+      for (const file of files) {
+        const row = await uploadBackgroundDoc({
+          sermonId: sermon.id,
+          ownerUserId: user.id,
+          file,
+        });
+        setBgDocs((cur) => [{ ...row, _on: true }, ...cur]);
+        setNotice(
+          row.kind === 'pdf_text'
+            ? `Added "${row.title}" — text extracted (${row.page_count} page${
+                row.page_count === 1 ? '' : 's'
+              }).`
+            : row.kind === 'pdf_scanned'
+            ? `Added "${row.title}" — scanned PDF; pages go to Claude as images.`
+            : `Added "${row.title}".`
+        );
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBgUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function toggleBgDoc(id) {
+    setBgDocs((cur) =>
+      cur.map((d) => (d.id === id ? { ...d, _on: !d._on } : d))
+    );
+  }
+
+  async function removeBgDoc(doc) {
+    if (!window.confirm(`Remove "${doc.title}" from this sermon's background documents?`)) {
+      return;
+    }
+    try {
+      await deleteBackgroundDoc(doc);
+      setBgDocs((cur) => cur.filter((d) => d.id !== doc.id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   function toggleTechnique(id) {
     setSelectedTechniqueIds((cur) =>
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
@@ -283,6 +364,13 @@ export default function CreativeStudio({
       const modelId = creativeModelIdForKey(modelKey);
       const onResources = resources.filter((r) => r._on);
 
+      // Background docs: text for extracted PDFs, vision blocks for
+      // images/scans. Downloads + page renders are cached on the doc
+      // objects, so only the first turn with a given doc pays the cost.
+      const { textBlock, imageBlocks } = await buildBackgroundDocsContext(
+        bgDocs.filter((d) => d._on)
+      );
+
       const reply = await runCreativeTurn({
         kind,
         mode: session.mode,
@@ -291,6 +379,8 @@ export default function CreativeStudio({
         resources: onResources,
         techniques: selectedTechniques,
         voicePrompt: kind === 'draft' ? voicePrompt : '',
+        extraContext: textBlock,
+        imageBlocks,
         history: session.messages || [],
         instruction: ask,
         model: modelId,
@@ -488,6 +578,11 @@ export default function CreativeStudio({
                       {selectedTechniques.length} technique
                       {selectedTechniques.length === 1 ? '' : 's'} in play
                     </span>
+                    <span className="text-gray-400">·</span>
+                    <span className="text-gray-600">
+                      {bgDocs.filter((d) => d._on).length}/{bgDocs.length}{' '}
+                      background docs on
+                    </span>
                     <button
                       className="text-indigo-700 underline"
                       onClick={() => setBrowseOpen((v) => !v)}
@@ -618,6 +713,70 @@ export default function CreativeStudio({
                           <button
                             className="hover:text-red-700"
                             onClick={() => removeResource(r.id)}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Background documents (Phase 2) */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => handleUploadFiles(e.target.files)}
+                    />
+                    <button
+                      className="btn-secondary text-sm"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={bgUploading}
+                      title="Load scholarly articles, commentary snapshots, or reference images (.pdf, .jpg, .png) into this sermon's Studio. Text PDFs are read directly; scans and images go to Claude vision."
+                    >
+                      {bgUploading ? 'Uploading…' : '+ Background document'}
+                    </button>
+                    {bgDocs.length === 0 && !bgUploading && (
+                      <span className="text-xs text-gray-500">
+                        Articles, commentary snapshots, reference images —
+                        each toggleable per turn.
+                      </span>
+                    )}
+                  </div>
+                  {bgDocs.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {bgDocs.map((d) => (
+                        <span
+                          key={d.id}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                            d._on
+                              ? 'bg-sky-100 text-sky-900'
+                              : 'bg-gray-100 text-gray-500 line-through'
+                          }`}
+                          title={
+                            (d.kind === 'pdf_text'
+                              ? `Text PDF — ${d.page_count ?? '?'} pages, text goes into the prompt.`
+                              : d.kind === 'pdf_scanned'
+                              ? 'Scanned PDF — first pages sent to Claude as images.'
+                              : 'Image — sent to Claude vision.') +
+                            (d._on
+                              ? ' ON — feeds the next turn.'
+                              : ' OFF — held aside.')
+                          }
+                        >
+                          <button onClick={() => toggleBgDoc(d.id)}>
+                            {d._on ? '●' : '○'}
+                          </button>
+                          📄 {d.title}
+                          {d.kind !== 'pdf_text' && (
+                            <span className="text-[10px] uppercase">vision</span>
+                          )}
+                          <button
+                            className="hover:text-red-700"
+                            onClick={() => removeBgDoc(d)}
                           >
                             ✕
                           </button>

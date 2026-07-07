@@ -248,7 +248,12 @@ const HISTORY_TURNS = 12;
  * @param {Array}  [input.resources]      toggled-ON resource rows
  * @param {Array}  [input.techniques]     toggled-ON technique cards
  * @param {string} [input.voicePrompt]    voice guide (draft turns)
- * @param {string} [input.extraContext]   pre-built extra context block (Phase 2)
+ * @param {string} [input.extraContext]   pre-built extra context block
+ *   (Phase 2: background docs text — see lib/backgroundDocs.js)
+ * @param {Array}  [input.imageBlocks]    Anthropic image content blocks
+ *   (Phase 2: background docs vision — commentary scans, images).
+ *   Attached to the anchor context message so every turn in the thread
+ *   can see them.
  * @param {Array}  [input.history]        prior session messages ({role, kind, content})
  * @param {string} input.instruction      what the pastor asked for this turn
  * @param {string|null} [input.model]     model id override (null = proxy default)
@@ -263,6 +268,7 @@ export async function runCreativeTurn({
   techniques = [],
   voicePrompt = '',
   extraContext = '',
+  imageBlocks = [],
   history = [],
   instruction,
   model = null,
@@ -279,13 +285,27 @@ export async function runCreativeTurn({
   const messages = [];
   // Anchor turn: context + a synthetic acknowledgement, mirroring the
   // proposeResourceUsage pattern, so history stays clean user/assistant
-  // alternation regardless of how many context blocks we carry.
-  messages.push({
-    role: 'user',
-    content:
-      context +
-      '\n\n---\n\nThat is the full working context. Wait for my instruction.',
-  });
+  // alternation regardless of how many context blocks we carry. When
+  // background-doc images ride along, the anchor becomes a multimodal
+  // content array (text intro → images → closing text) — same shape
+  // analyzeResourceWithImages uses through the claude-proxy.
+  const closing =
+    '\n\n---\n\nThat is the full working context. Wait for my instruction.';
+  if (Array.isArray(imageBlocks) && imageBlocks.length > 0) {
+    messages.push({
+      role: 'user',
+      content: [
+        { type: 'text', text: context },
+        ...imageBlocks,
+        { type: 'text', text: closing.trim() },
+      ],
+    });
+  } else {
+    messages.push({
+      role: 'user',
+      content: context + closing,
+    });
+  }
   messages.push({ role: 'assistant', content: 'Ready.' });
 
   for (const m of history.slice(-HISTORY_TURNS)) {
