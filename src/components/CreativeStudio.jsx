@@ -26,7 +26,21 @@ import {
   appendSessionMessages,
   runCreativeTurn,
   modeLabel,
+  CRITIQUE_TOOLS,
+  critiqueToolByKey,
 } from '../lib/creativeStudio';
+import {
+  RUNNING_LISTS,
+  listLabel,
+  fetchListItems,
+  addListItem,
+  toggleListItemUsed,
+  deleteListItem,
+  buildListsContext,
+  buildWeaveInstruction,
+  splitBrainstormItems,
+} from '../lib/creativeLists';
+import { supabase, withTimeout } from '../lib/supabase';
 import { createStashedBlock } from '../lib/sermonStashedBlocks';
 import {
   listBackgroundDocs,
@@ -54,6 +68,9 @@ import {
 //   manuscript      - current working manuscript text
 //   voicePrompt     - the pastor's voice guide (parent already loads it)
 //   onInsertDraft   - (text) => void — parent appends into manuscript
+//   onSendToChat    - (text) => void — parent pre-fills the Workspace
+//                     revision-chat composer (used by "Weave" on lists);
+//                     the Studio closes so the pastor lands on the chat
 export default function CreativeStudio({
   open,
   onClose,
@@ -61,6 +78,7 @@ export default function CreativeStudio({
   manuscript,
   voicePrompt,
   onInsertDraft,
+  onSendToChat,
 }) {
   const { user } = useAuth();
 
@@ -99,6 +117,21 @@ export default function CreativeStudio({
   const [bgUploading, setBgUploading] = useState(false);
   const fileInputRef = useRef(null);
 
+  // Running Lists (Phase 3).
+  const [listItems, setListItems] = useState([]);
+  const [listsOpen, setListsOpen] = useState(false);
+  const [includeLists, setIncludeLists] = useState(true);
+  // Target list for one-click filing from brainstorm items.
+  const [fileTargetKey, setFileTargetKey] = useState('golden_phrases');
+  const [newItemKey, setNewItemKey] = useState('golden_phrases');
+  const [newItemText, setNewItemText] = useState('');
+
+  // Critique tool selection (Phase 3).
+  const [critiqueKey, setCritiqueKey] = useState('succes');
+  // Message ids already saved to the resource library this session
+  // (index-keyed; prevents accidental double-saves).
+  const [savedToLibrary, setSavedToLibrary] = useState(new Set());
+
   // ---- composer -----------------------------------------------------
   const [instruction, setInstruction] = useState('');
   const [sending, setSending] = useState(false);
@@ -131,6 +164,23 @@ export default function CreativeStudio({
         if (!cancelled) setError(e.message);
       } finally {
         if (!cancelled) setLoadingSessions(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sermon?.id]);
+
+  // Load running-list items on open.
+  useEffect(() => {
+    if (!open || !sermon?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rows = await fetchListItems(sermon.id);
+        if (!cancelled) setListItems(rows);
+      } catch (e) {
+        if (!cancelled) setError(e.message);
       }
     })();
     return () => {
@@ -291,6 +341,110 @@ export default function CreativeStudio({
     }
   }
 
+  // ---- Running Lists handlers (Phase 3) -----------------------------
+
+  async function fileToList(content, listKey) {
+    try {
+      const row = await addListItem({
+        sermonId: sermon.id,
+        ownerUserId: user.id,
+        listKey,
+        content,
+        source: 'studio',
+      });
+      setListItems((cur) => [...cur, row]);
+      setNotice(`Filed to ${listLabel(listKey)}.`);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function addManualItem(e) {
+    e?.preventDefault?.();
+    const body = newItemText.trim();
+    if (!body) return;
+    try {
+      const row = await addListItem({
+        sermonId: sermon.id,
+        ownerUserId: user.id,
+        listKey: newItemKey,
+        content: body,
+        source: 'manual',
+      });
+      setListItems((cur) => [...cur, row]);
+      setNewItemText('');
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+
+  async function handleToggleUsed(item) {
+    try {
+      const updated = await toggleListItemUsed(item);
+      setListItems((cur) => cur.map((i) => (i.id === updated.id ? updated : i)));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function handleDeleteItem(id) {
+    try {
+      await deleteListItem(id);
+      setListItems((cur) => cur.filter((i) => i.id !== id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function weaveList(listKey) {
+    const instruction = buildWeaveInstruction(listKey, listItems);
+    if (!instruction) {
+      setNotice('Nothing live on that list to weave.');
+      return;
+    }
+    if (onSendToChat) {
+      onSendToChat(instruction);
+      onClose();
+    }
+  }
+
+  // ---- Save a Studio output to the resource library ------------------
+
+  async function saveMessageToLibrary(m, idx) {
+    try {
+      const { error: insErr } = await withTimeout(
+        supabase.from('resources').insert({
+          owner_user_id: user.id,
+          resource_type: 'note',
+          title: `Studio ${m.kind === 'draft' ? 'draft' : 'brainstorm'}: ${
+            sermon?.title || sermon?.scripture_reference || 'sermon'
+          }`,
+          content: m.content,
+          source: 'Creative Studio',
+          scripture_refs: sermon?.scripture_reference || null,
+          notes: `Saved from Creative Studio (${modeLabel(m.mode)} mode).`,
+        })
+      );
+      if (insErr) throw insErr;
+      setSavedToLibrary((cur) => new Set(cur).add(idx));
+      setNotice('Saved to your resource library (as a note — retype/tag it there anytime).');
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  // ---- Critique (Phase 3) --------------------------------------------
+
+  function runCritique() {
+    const tool = critiqueToolByKey(critiqueKey);
+    if (!tool) return;
+    if (!manuscript || !manuscript.trim()) {
+      setError('Critiques need a working manuscript — write something first.');
+      return;
+    }
+    send('critique', { presetAsk: tool.ask, displayAsk: `Run: ${tool.label}` });
+  }
+
   function toggleTechnique(id) {
     setSelectedTechniqueIds((cur) =>
       cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id]
@@ -338,13 +492,16 @@ export default function CreativeStudio({
     }
   }
 
-  async function send(kind) {
+  async function send(kind, { presetAsk = null, displayAsk = null } = {}) {
     const text = instruction.trim();
     const defaultAsk =
       kind === 'brainstorm'
         ? 'Open this text up for me. Where are the live wires?'
         : 'Draft a passage for where the sermon is headed.';
-    const ask = text || defaultAsk;
+    const ask = presetAsk || text || defaultAsk;
+    // What lands in the visible thread — critiques store their short
+    // label rather than the full canned instruction.
+    const shownAsk = displayAsk || ask;
 
     setSending(true);
     setError(null);
@@ -371,15 +528,25 @@ export default function CreativeStudio({
         bgDocs.filter((d) => d._on)
       );
 
+      // Running lists ride along (unless toggled off) so Claude builds
+      // on what's already been collected instead of re-inventing it.
+      const listsBlock = includeLists ? buildListsContext(listItems) : '';
+      const extraContext = [listsBlock, textBlock]
+        .filter(Boolean)
+        .join('\n\n---\n\n');
+
       const reply = await runCreativeTurn({
         kind,
         mode: session.mode,
         sermon,
-        manuscript: includeManuscript ? manuscript : '',
+        // Critiques are meaningless without the manuscript — force it
+        // on regardless of the context-mix toggle.
+        manuscript:
+          kind === 'critique' || includeManuscript ? manuscript : '',
         resources: onResources,
         techniques: selectedTechniques,
         voicePrompt: kind === 'draft' ? voicePrompt : '',
-        extraContext: textBlock,
+        extraContext,
         imageBlocks,
         history: session.messages || [],
         instruction: ask,
@@ -388,7 +555,7 @@ export default function CreativeStudio({
 
       const now = new Date().toISOString();
       const newMessages = [
-        { role: 'user', kind, content: ask, mode: session.mode, at: now },
+        { role: 'user', kind, content: shownAsk, mode: session.mode, at: now },
         {
           role: 'assistant',
           kind,
@@ -553,6 +720,15 @@ export default function CreativeStudio({
                   onClick={() => setContextOpen((v) => !v)}
                 >
                   {contextOpen ? 'Hide context mix' : 'Show context mix'}
+                </button>
+                <button
+                  className="text-sm text-indigo-700 underline"
+                  onClick={() => setListsOpen((v) => !v)}
+                  title="Per-sermon running lists from your Exegete-a-Con-Text method: golden phrases, sticky stories, humor log, titles…"
+                >
+                  {listsOpen ? 'Close Running Lists' : 'Running Lists'}
+                  {listItems.filter((i) => !i.used_at).length > 0 &&
+                    ` (${listItems.filter((i) => !i.used_at).length})`}
                 </button>
               </div>
 
@@ -813,7 +989,12 @@ export default function CreativeStudio({
                 >
                   {m.role === 'assistant' && (
                     <p className="text-xs text-gray-500 mb-1">
-                      {m.kind === 'draft' ? '📄 Draft' : '✨ Brainstorm'} ·{' '}
+                      {m.kind === 'draft'
+                        ? '📄 Draft'
+                        : m.kind === 'critique'
+                        ? '✓ Critique'
+                        : '✨ Brainstorm'}{' '}
+                      ·{' '}
                       {modeLabel(m.mode)}
                       {m.model
                         ? ` · ${
@@ -823,7 +1004,26 @@ export default function CreativeStudio({
                         : ' · Sonnet 4.6'}
                     </p>
                   )}
-                  <div className="whitespace-pre-wrap text-sm">{m.content}</div>
+                  {m.role === 'assistant' && m.kind === 'brainstorm' ? (
+                    // Brainstorms render item-by-item so each line can be
+                    // filed to a Running List with one click.
+                    <ol className="text-sm space-y-1.5 list-decimal pl-5">
+                      {splitBrainstormItems(m.content).map((item, j) => (
+                        <li key={j} className="group/item">
+                          <span className="whitespace-pre-wrap">{item}</span>{' '}
+                          <button
+                            className="opacity-0 group-hover/item:opacity-100 text-[10px] text-indigo-700 underline align-baseline"
+                            title={`File this line to ${listLabel(fileTargetKey)} (change the target list in the Running Lists panel)`}
+                            onClick={() => fileToList(item, fileTargetKey)}
+                          >
+                            + {listLabel(fileTargetKey)}
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="whitespace-pre-wrap text-sm">{m.content}</div>
+                  )}
                   {m.role === 'assistant' && m.kind === 'draft' && (
                     <div className="mt-2 flex gap-2">
                       <button
@@ -837,6 +1037,19 @@ export default function CreativeStudio({
                         onClick={() => stashDraft(m.content)}
                       >
                         Stash for later
+                      </button>
+                    </div>
+                  )}
+                  {m.role === 'assistant' && m.kind !== 'critique' && (
+                    <div className="mt-1">
+                      <button
+                        className="text-[10px] text-gray-500 hover:text-indigo-700 underline"
+                        disabled={savedToLibrary.has(i)}
+                        onClick={() => saveMessageToLibrary(m, i)}
+                      >
+                        {savedToLibrary.has(i)
+                          ? '✓ Saved to library'
+                          : 'Save to resource library'}
                       </button>
                     </div>
                   )}
@@ -895,12 +1108,155 @@ export default function CreativeStudio({
                 >
                   📄 Draft copy
                 </button>
+                <span className="mx-1 text-gray-300">|</span>
+                <select
+                  className="input text-xs py-1 w-auto"
+                  value={critiqueKey}
+                  onChange={(e) => setCritiqueKey(e.target.value)}
+                  title="Your own post-writing checks, run against the working manuscript."
+                >
+                  {CRITIQUE_TOOLS.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  className="btn-secondary text-sm"
+                  onClick={runCritique}
+                  disabled={sending || !manuscript || !manuscript.trim()}
+                  title={
+                    !manuscript || !manuscript.trim()
+                      ? 'Critiques need a working manuscript.'
+                      : 'Run this check against the current manuscript.'
+                  }
+                >
+                  ✓ Critique
+                </button>
                 <span className="text-xs text-gray-400 ml-auto">
                   Ctrl/⌘+Enter = Brainstorm
                 </span>
               </div>
             </div>
           </div>
+
+          {/* Running Lists panel (Phase 3) */}
+          {listsOpen && (
+            <div className="w-80 shrink-0 border-l flex flex-col">
+              <div className="border-b px-3 py-2 space-y-2">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-semibold">Running Lists</h3>
+                  <label
+                    className="inline-flex items-center gap-1 text-xs"
+                    title="When on, live list items ride along on every turn so Claude builds on them instead of re-inventing them."
+                  >
+                    <input
+                      type="checkbox"
+                      checked={includeLists}
+                      onChange={(e) => setIncludeLists(e.target.checked)}
+                    />
+                    feed turns
+                  </label>
+                </div>
+                <label className="block text-xs text-gray-600">
+                  “+” on brainstorm lines files to:
+                  <select
+                    className="input text-xs py-1 mt-0.5"
+                    value={fileTargetKey}
+                    onChange={(e) => setFileTargetKey(e.target.value)}
+                  >
+                    {RUNNING_LISTS.map((l) => (
+                      <option key={l.key} value={l.key}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <form onSubmit={addManualItem} className="flex gap-1">
+                  <select
+                    className="input text-xs py-1 w-28 shrink-0"
+                    value={newItemKey}
+                    onChange={(e) => setNewItemKey(e.target.value)}
+                  >
+                    {RUNNING_LISTS.map((l) => (
+                      <option key={l.key} value={l.key}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="input text-xs py-1"
+                    placeholder="Add an item…"
+                    value={newItemText}
+                    onChange={(e) => setNewItemText(e.target.value)}
+                  />
+                  <button className="btn-secondary text-xs shrink-0">Add</button>
+                </form>
+              </div>
+              <div className="flex-1 overflow-y-auto px-3 py-2 space-y-3">
+                {RUNNING_LISTS.map((l) => {
+                  const items = listItems.filter((i) => i.list_key === l.key);
+                  if (items.length === 0) return null;
+                  const liveCount = items.filter((i) => !i.used_at).length;
+                  return (
+                    <div key={l.key}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-600" title={l.hint}>
+                          {l.label}
+                        </h4>
+                        {liveCount > 0 && onSendToChat && (
+                          <button
+                            className="text-[10px] text-indigo-700 underline shrink-0"
+                            onClick={() => weaveList(l.key)}
+                            title="Hand the live items on this list to the Workspace revision chat as a 'weave these in' instruction."
+                          >
+                            ▶ Weave into manuscript
+                          </button>
+                        )}
+                      </div>
+                      <ul className="mt-1 space-y-1">
+                        {items.map((item) => (
+                          <li
+                            key={item.id}
+                            className={`group/li flex items-start gap-1.5 text-xs rounded px-1.5 py-1 ${
+                              item.used_at
+                                ? 'text-gray-400 line-through bg-gray-50'
+                                : 'bg-amber-50/60'
+                            }`}
+                          >
+                            <button
+                              className="shrink-0 mt-px"
+                              title={item.used_at ? 'Mark as unused' : 'Mark as used in the manuscript'}
+                              onClick={() => handleToggleUsed(item)}
+                            >
+                              {item.used_at ? '✓' : '○'}
+                            </button>
+                            <span className="flex-1 whitespace-pre-wrap">
+                              {item.content}
+                            </span>
+                            <button
+                              className="opacity-0 group-hover/li:opacity-100 text-gray-400 hover:text-red-600 shrink-0"
+                              title="Delete item"
+                              onClick={() => handleDeleteItem(item.id)}
+                            >
+                              ✕
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })}
+                {listItems.length === 0 && (
+                  <p className="text-xs text-gray-500">
+                    Nothing filed yet. Hover a brainstorm line and click the
+                    “+” to file it, or add items by hand above. Lists feed
+                    future turns and can be woven into the manuscript.
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

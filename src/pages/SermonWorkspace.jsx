@@ -1111,6 +1111,11 @@ export default function SermonWorkspace() {
         sermon={sermon}
         manuscript={manuscript}
         voicePrompt={voicePrompt}
+        onSendToChat={(text) => {
+          // "Weave" hand-off from the Studio's Running Lists: pre-fill
+          // the revision-chat composer; the pastor reviews + sends.
+          setDraftInstruction(text);
+        }}
         onInsertDraft={(text) => {
           if (isLocked) {
             // Finalized manuscripts don't take insertions — mirror the

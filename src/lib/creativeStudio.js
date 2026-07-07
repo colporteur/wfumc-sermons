@@ -129,6 +129,69 @@ const MODE_CHARTERS = {
   ].join(' '),
 };
 
+// Critique tools (Phase 3) — the pastor's own post-writing checks,
+// runnable against the working manuscript at any point. Keys are
+// stored on session messages; instructions come from the Post Writing
+// Process and CRAFT documents.
+export const CRITIQUE_TOOLS = [
+  {
+    key: 'succes',
+    label: 'SUCCES analysis',
+    ask: [
+      'Run a SUCCES analysis (Made to Stick) on the working manuscript:',
+      'score it 1–5 on each axis — Simple, Unexpected, Concrete,',
+      'Credible, Emotional, Story — with a one-sentence justification',
+      'per axis, then prescribe the single highest-leverage fix for each',
+      'axis scoring 3 or below. Quote the manuscript when diagnosing.',
+    ].join(' '),
+  },
+  {
+    key: 'subtraction',
+    label: 'Subtraction Process',
+    ask: [
+      'Apply the pastor\'s 7-step Subtraction Process to the working',
+      'manuscript: (1) flag what is dull, dumb, or irrelevant; (2) name',
+      'the high points that deserve immunity; (3) flag what does not',
+      'quickly support the claim of the text; (4) flag what is',
+      'disproportionately interesting to the preacher alone; (5) flag',
+      'ideas that seemed better than they turned out; (6) reconsider',
+      'loaded words, especially as they could affect marginalized',
+      'people; (7) list six-dollar academic words with plain',
+      'replacements. Quote the manuscript for every flag. Recommend',
+      'cuts, not rewrites.',
+    ].join(' '),
+  },
+  {
+    key: 'be_sure_to',
+    label: '"Be sure to…" check',
+    ask: [
+      'Check the working manuscript against the three ingredients of',
+      'preaching that draws hearers: Does it teach one thing they',
+      'didn\'t know? Does it inspire, encourage, or touch the heart at',
+      'least once? Does it offer an invitation to respond in ONE',
+      'concrete way? For each: verdict, evidence quoted from the',
+      'manuscript, and — where missing — a specific proposal.',
+    ].join(' '),
+  },
+  {
+    key: 'story_warnings',
+    label: 'Story warnings audit',
+    ask: [
+      'Audit every story and illustration in the working manuscript',
+      'against the CRAFT warnings: perspective altered too frequently;',
+      'emotion milked dry instead of letting some remain; personal',
+      'experience that lingers on the self instead of universalizing.',
+      'Also run a quick SUCCES pass per story. Name each story by a',
+      'short handle, quote the problem spot, and suggest the smallest',
+      'fix.',
+    ].join(' '),
+  },
+];
+
+export function critiqueToolByKey(key) {
+  return CRITIQUE_TOOLS.find((t) => t.key === key) || null;
+}
+
 function buildStudioSystem({ mode, kind, voicePrompt }) {
   const parts = [];
   parts.push(
@@ -155,7 +218,20 @@ function buildStudioSystem({ mode, kind, voicePrompt }) {
     ].join(' ')
   );
 
-  if (kind === 'brainstorm') {
+  if (kind === 'critique') {
+    parts.push(
+      [
+        'OUTPUT CONTRACT — CRITIQUE: you are running one of the',
+        'pastor\'s own post-writing checks against his working',
+        'manuscript. Be a ruthless editor: specific, quoted, unsparing,',
+        'and kind. Structure the output exactly as the check',
+        'prescribes. No rewritten prose — diagnoses, flags, and the',
+        'smallest possible prescriptions only. If the manuscript is',
+        'genuinely strong on a point, say so in one line and move on;',
+        'do not invent problems to seem thorough.',
+      ].join(' ')
+    );
+  } else if (kind === 'brainstorm') {
     parts.push(
       [
         'OUTPUT CONTRACT — BRAINSTORM: return a numbered list of',
@@ -241,7 +317,7 @@ const HISTORY_TURNS = 12;
  * Run one Studio turn against Claude.
  *
  * @param {Object} input
- * @param {'brainstorm'|'draft'} input.kind
+ * @param {'brainstorm'|'draft'|'critique'} input.kind
  * @param {'exegesis'|'illustration'|'balanced'} input.mode
  * @param {Object} input.sermon           sermon row (title, scripture_reference, theme)
  * @param {string} [input.manuscript]     working manuscript ('' to exclude)
@@ -320,11 +396,12 @@ export async function runCreativeTurn({
     {
       messages,
       system,
-      max_tokens: kind === 'draft' ? 3000 : 2000,
+      max_tokens: kind === 'draft' ? 3000 : kind === 'critique' ? 2500 : 2000,
       ...(model ? { model } : {}),
     },
-    // Brainstorms are quick; drafts on the big models can take a while.
-    { timeoutMs: kind === 'draft' ? 150000 : 90000 }
+    // Brainstorms are quick; drafts + critiques on the big models can
+    // take a while (critiques re-read the whole manuscript).
+    { timeoutMs: kind === 'brainstorm' ? 90000 : 150000 }
   );
   const text = extractText(response).trim();
   if (!text) {
