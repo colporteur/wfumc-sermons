@@ -48,6 +48,11 @@ import {
   deleteBackgroundDoc,
   buildBackgroundDocsContext,
 } from '../lib/backgroundDocs';
+import {
+  searchPeople,
+  personDisplayName,
+  buildCongregationContext,
+} from '../lib/congregation';
 
 // Creative Studio — full-screen brainstorming overlay for the Sermon
 // Workspace. Operationalizes the pastor's twelve sermon-tips documents
@@ -116,6 +121,15 @@ export default function CreativeStudio({
   const [bgDocs, setBgDocs] = useState([]);
   const [bgUploading, setBgUploading] = useState(false);
   const fileInputRef = useRef(null);
+
+  // Specific Pews (Phase 4): real parishioners as lenses. Rows carry a
+  // per-session _on toggle and a _ctxCache the congregation lib fills.
+  // Selection is session-only by design — who's on the pastor's mind
+  // for THIS sitting isn't something to persist.
+  const [people, setPeople] = useState([]);
+  const [peopleQ, setPeopleQ] = useState('');
+  const [peopleResults, setPeopleResults] = useState([]);
+  const [peopleSearching, setPeopleSearching] = useState(false);
 
   // Running Lists (Phase 3).
   const [listItems, setListItems] = useState([]);
@@ -341,6 +355,43 @@ export default function CreativeStudio({
     }
   }
 
+  // ---- Specific Pews handlers (Phase 4) ------------------------------
+
+  async function runPeopleSearch(e) {
+    e?.preventDefault?.();
+    const q = peopleQ.trim();
+    if (!q) return;
+    setPeopleSearching(true);
+    setError(null);
+    try {
+      const rows = await searchPeople(q);
+      const have = new Set(people.map((p) => p.id));
+      setPeopleResults(rows.filter((r) => !have.has(r.id)));
+      if (!rows.length) setNotice('No one in Pastoral Records matches that.');
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setPeopleSearching(false);
+    }
+  }
+
+  function addPerson(row) {
+    setPeople((cur) =>
+      cur.some((p) => p.id === row.id) ? cur : [...cur, { ...row, _on: true }]
+    );
+    setPeopleResults((cur) => cur.filter((r) => r.id !== row.id));
+  }
+
+  function togglePerson(id) {
+    setPeople((cur) =>
+      cur.map((p) => (p.id === id ? { ...p, _on: !p._on } : p))
+    );
+  }
+
+  function removePerson(id) {
+    setPeople((cur) => cur.filter((p) => p.id !== id));
+  }
+
   // ---- Running Lists handlers (Phase 3) -----------------------------
 
   async function fileToList(content, listKey) {
@@ -535,6 +586,14 @@ export default function CreativeStudio({
         .filter(Boolean)
         .join('\n\n---\n\n');
 
+      // Specific Pews: toggled-on parishioners (profile + interaction
+      // summaries, cached per person). Presence of this block also
+      // activates the first-names-only / lens-not-material rules in
+      // the system prompt.
+      const congregationContext = await buildCongregationContext(
+        people.filter((p) => p._on)
+      );
+
       const reply = await runCreativeTurn({
         kind,
         mode: session.mode,
@@ -547,6 +606,7 @@ export default function CreativeStudio({
         techniques: selectedTechniques,
         voicePrompt: kind === 'draft' ? voicePrompt : '',
         extraContext,
+        congregationContext,
         imageBlocks,
         history: session.messages || [],
         instruction: ask,
@@ -759,6 +819,11 @@ export default function CreativeStudio({
                       {bgDocs.filter((d) => d._on).length}/{bgDocs.length}{' '}
                       background docs on
                     </span>
+                    <span className="text-gray-400">·</span>
+                    <span className="text-gray-600">
+                      {people.filter((p) => p._on).length}/{people.length}{' '}
+                      pews on
+                    </span>
                     <button
                       className="text-indigo-700 underline"
                       onClick={() => setBrowseOpen((v) => !v)}
@@ -953,6 +1018,76 @@ export default function CreativeStudio({
                           <button
                             className="hover:text-red-700"
                             onClick={() => removeBgDoc(d)}
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Specific Pews (Phase 4) */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <form onSubmit={runPeopleSearch} className="flex gap-1">
+                      <input
+                        className="input text-sm py-1"
+                        placeholder="Specific pews: search Pastoral Records…"
+                        value={peopleQ}
+                        onChange={(e) => setPeopleQ(e.target.value)}
+                      />
+                      <button
+                        className="btn-secondary text-sm"
+                        disabled={peopleSearching}
+                      >
+                        {peopleSearching ? 'Searching…' : 'Find person'}
+                      </button>
+                    </form>
+                    {people.length === 0 && (
+                      <span className="text-xs text-gray-500">
+                        Hear the sermon through specific parishioners' ears
+                        (profile + interaction summaries; first names only in
+                        replies).
+                      </span>
+                    )}
+                  </div>
+                  {peopleResults.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {peopleResults.map((r) => (
+                        <button
+                          key={r.id}
+                          className="rounded-full border px-2 py-0.5 text-xs hover:bg-gray-50"
+                          onClick={() => addPerson(r)}
+                          title="Click to add as a lens"
+                        >
+                          + {personDisplayName(r)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {people.length > 0 && (
+                    <div className="flex flex-wrap gap-1">
+                      {people.map((p) => (
+                        <span
+                          key={p.id}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                            p._on
+                              ? 'bg-violet-100 text-violet-900'
+                              : 'bg-gray-100 text-gray-500 line-through'
+                          }`}
+                          title={
+                            (p._on
+                              ? 'ON — this person\'s profile + recent interaction summaries feed the next turn. '
+                              : 'OFF — held aside. ') +
+                            'Claude refers to them by first name only and never proposes identifiable sermon material.'
+                          }
+                        >
+                          <button onClick={() => togglePerson(p.id)}>
+                            {p._on ? '●' : '○'}
+                          </button>
+                          {personDisplayName(p)}
+                          <button
+                            className="hover:text-red-700"
+                            onClick={() => removePerson(p.id)}
                           >
                             ✕
                           </button>

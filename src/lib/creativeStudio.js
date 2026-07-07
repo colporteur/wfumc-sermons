@@ -192,7 +192,24 @@ export function critiqueToolByKey(key) {
   return CRITIQUE_TOOLS.find((t) => t.key === key) || null;
 }
 
-function buildStudioSystem({ mode, kind, voicePrompt }) {
+// Hard rules that attach whenever real parishioners ("Specific Pews",
+// Phase 4) are in context. These are pastoral-ethics constraints, not
+// style preferences — they protect real people in a small town.
+const SPECIFIC_PEWS_RULES = [
+  'SPECIFIC PEWS RULES — real parishioners are included in the working',
+  'context. Two hard rules: (1) In EVERYTHING you write back, refer to',
+  'each parishioner by FIRST NAME ONLY — never surnames, addresses, or',
+  'other identifying details; your replies are saved and must stay',
+  'clean. (2) Parishioners are LENSES, not material. Use them to test',
+  'how the text\'s claim will land in their particular pew — their',
+  'questions, resistances, hungers. NEVER propose sermon content,',
+  'illustrations, or draft copy that would let a congregation identify',
+  'a person\'s private situation from the pulpit. If the pastor asks',
+  'for material drawn from someone\'s life, generalize it beyond',
+  'recognition and say plainly that you have done so.',
+].join(' ');
+
+function buildStudioSystem({ mode, kind, voicePrompt, hasCongregation = false }) {
   const parts = [];
   parts.push(
     [
@@ -206,6 +223,9 @@ function buildStudioSystem({ mode, kind, voicePrompt }) {
     ].join(' ')
   );
   parts.push(MODE_CHARTERS[mode] || MODE_CHARTERS.balanced);
+  if (hasCongregation) {
+    parts.push(SPECIFIC_PEWS_RULES);
+  }
   parts.push(
     [
       'House rules, from the pastor\'s own documents: early-stage work',
@@ -264,7 +284,14 @@ function buildStudioSystem({ mode, kind, voicePrompt }) {
   return parts.join('\n\n');
 }
 
-function buildContextMessage({ sermon, manuscript, resources, techniques, extraContext }) {
+function buildContextMessage({
+  sermon,
+  manuscript,
+  resources,
+  techniques,
+  extraContext,
+  congregationContext,
+}) {
   const blocks = [];
 
   const meta = [];
@@ -290,9 +317,14 @@ function buildContextMessage({ sermon, manuscript, resources, techniques, extraC
     blocks.push('# Technique cards in play\n' + techniquesBlock);
   }
 
+  // Phase 4: Specific Pews — real parishioners as lenses.
+  if (congregationContext) {
+    blocks.push(congregationContext);
+  }
+
   // Phase 2 slot: background documents (articles, commentary
   // snapshots) will be appended here by the caller as pre-built text
-  // and/or image blocks.
+  // and/or image blocks. Phase 3 running lists arrive here too.
   if (extraContext) {
     blocks.push(extraContext);
   }
@@ -344,18 +376,25 @@ export async function runCreativeTurn({
   techniques = [],
   voicePrompt = '',
   extraContext = '',
+  congregationContext = '',
   imageBlocks = [],
   history = [],
   instruction,
   model = null,
 }) {
-  const system = buildStudioSystem({ mode, kind, voicePrompt });
+  const system = buildStudioSystem({
+    mode,
+    kind,
+    voicePrompt,
+    hasCongregation: Boolean(congregationContext),
+  });
   const context = buildContextMessage({
     sermon,
     manuscript,
     resources,
     techniques,
     extraContext,
+    congregationContext,
   });
 
   const messages = [];
