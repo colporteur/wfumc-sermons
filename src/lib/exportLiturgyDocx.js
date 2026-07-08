@@ -14,7 +14,7 @@
 //   …
 //
 // One-shot entry point:
-//   await exportLiturgyDocx({ liturgy, sections, showAnnouncements })
+//   await exportLiturgyDocx({ liturgy, sections })
 
 import {
   Document,
@@ -26,6 +26,13 @@ import {
   convertInchesToTwip,
 } from 'docx';
 import { getElementLabel } from './worshipElements';
+
+// Todd's font of choice for all Word output. Set BOTH as the document
+// default AND explicitly on every TextRun — the docx library's
+// styles.default doesn't cover HeadingLevel paragraphs (they'd render
+// in Calibri Light). Belt-and-suspenders, same as
+// WFUMC SS/src/lib/exportBackPageDocx.js.
+const FONT = 'Albertus Medium';
 
 function safeFilename(s) {
   return (s || '')
@@ -42,7 +49,12 @@ function bodyParagraphs(body) {
     paragraphs.push(
       new Paragraph({
         children: [
-          new TextRun({ text: '(no text)', italics: true, color: '888888' }),
+          new TextRun({
+            text: '(no text)',
+            italics: true,
+            color: '888888',
+            font: FONT,
+          }),
         ],
       })
     );
@@ -53,7 +65,7 @@ function bodyParagraphs(body) {
     const lines = block.split(/\n/);
     const runs = [];
     lines.forEach((line, idx) => {
-      runs.push(new TextRun({ text: line }));
+      runs.push(new TextRun({ text: line, font: FONT }));
       if (idx < lines.length - 1) runs.push(new TextRun({ break: 1 }));
     });
     paragraphs.push(
@@ -81,6 +93,7 @@ function elementHeading(element) {
         bold: true,
         size: 22, // 11pt
         color: '7E2A2A', // muted UMC red
+        font: FONT, // explicit — heading paragraphs don't inherit the doc default
       }),
       ...(customTitle
         ? [
@@ -88,6 +101,7 @@ function elementHeading(element) {
               text: '  — ' + customTitle,
               size: 22,
               color: '555555',
+              font: FONT,
             }),
           ]
         : []),
@@ -95,10 +109,10 @@ function elementHeading(element) {
   });
 }
 
-export async function buildLiturgyDocx({ liturgy, sections, showAnnouncements = false }) {
-  const visible = (sections || []).filter(
-    (s) => showAnnouncements || !s.is_announcement
-  );
+export async function buildLiturgyDocx({ liturgy, sections }) {
+  // Announcements used to be hidden from the export by default; they're
+  // now a regular first-class element rendered with the rest.
+  const visible = sections || [];
 
   // --- Title block ---
   const titleParagraph = new Paragraph({
@@ -110,6 +124,7 @@ export async function buildLiturgyDocx({ liturgy, sections, showAnnouncements = 
         bold: true,
         size: 36, // 18pt
         color: '4A1A1A',
+        font: FONT,
       }),
     ],
   });
@@ -128,6 +143,7 @@ export async function buildLiturgyDocx({ liturgy, sections, showAnnouncements = 
             italics: true,
             size: 22,
             color: '555555',
+            font: FONT,
           }),
         ],
       })
@@ -150,6 +166,7 @@ export async function buildLiturgyDocx({ liturgy, sections, showAnnouncements = 
             text: '(No elements yet.)',
             italics: true,
             color: '888888',
+            font: FONT,
           }),
         ],
       })
@@ -159,6 +176,13 @@ export async function buildLiturgyDocx({ liturgy, sections, showAnnouncements = 
   const doc = new Document({
     creator: 'WFUMC Sermon Archive',
     title: liturgy.title || 'Liturgy',
+    styles: {
+      default: {
+        document: {
+          run: { font: FONT },
+        },
+      },
+    },
     sections: [
       {
         properties: {

@@ -74,14 +74,17 @@ export const ELEMENT_LABEL_ALIASES = {
 };
 
 // Default 6 elements for every new liturgy, in Todd's stated order
-// (NOT liturgical-standard order — he prefers Call to Worship first).
+// (NOT liturgical-standard order): Call to Worship, then Prelude with
+// Announcements directly under it, then the Offering Statement between
+// Announcements and the Children's Moment. (Order revised July 2026 —
+// offering_statement previously sat right after call_to_worship.)
 export const DEFAULT_ELEMENT_KEYS = [
   'call_to_worship',
   'prelude',
   'announcements',
+  'offering_statement',
   'childrens_moment',
   'congregational_prayer',
-  'offering_statement',
 ];
 
 /**
@@ -113,7 +116,11 @@ export function buildDefaultElements({ liturgyId, ownerUserId }) {
     title: getElementLabel(key),
     body: '',
     sort_order: idx,
-    is_announcement: key === 'announcements',
+    // Announcements is a normal first-class element now — no longer
+    // auto-flagged for hiding. The is_announcement column still exists
+    // on the schema (legacy imported liturgies may have rows with it
+    // set to true) but new defaults don't set it.
+    is_announcement: false,
   }));
 }
 
