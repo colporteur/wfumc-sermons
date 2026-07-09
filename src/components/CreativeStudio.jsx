@@ -967,7 +967,7 @@ export default function CreativeStudio({
                     <input
                       ref={fileInputRef}
                       type="file"
-                      accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                      accept=".pdf,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png,text/plain,text/markdown"
                       multiple
                       className="hidden"
                       onChange={(e) => handleUploadFiles(e.target.files)}
@@ -976,7 +976,7 @@ export default function CreativeStudio({
                       className="btn-secondary text-sm"
                       onClick={() => fileInputRef.current?.click()}
                       disabled={bgUploading}
-                      title="Load scholarly articles, commentary snapshots, or reference images (.pdf, .jpg, .png) into this sermon's Studio. Text PDFs are read directly; scans and images go to Claude vision."
+                      title="Load scholarly articles, commentary snapshots, or reference images (.pdf, .jpg, .png, .txt, .md) into this sermon's Studio. Text files and text PDFs are read directly; scans and images go to Claude vision."
                     >
                       {bgUploading ? 'Uploading…' : '+ Background document'}
                     </button>

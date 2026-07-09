@@ -112,8 +112,24 @@ export async function uploadBackgroundDoc({ sermonId, ownerUserId, file }) {
   const isImage =
     /^image\/(jpeg|jpg|png)$/.test(file.type) ||
     /\.(jpe?g|png)$/.test(lower);
-  if (!isPdf && !isImage) {
-    throw new Error('Only .pdf, .jpg, and .png files are supported here.');
+  const isPlainText =
+    file.type === 'text/plain' ||
+    file.type === 'text/markdown' ||
+    /\.(txt|md)$/.test(lower);
+  if (!isPdf && !isImage && !isPlainText) {
+    throw new Error('Only .pdf, .jpg, .png, .txt, and .md files are supported here.');
+  }
+
+  // Plain-text files skip the bucket entirely — they become a 'text'
+  // background doc (same as pasted notes), body in extracted_text.
+  if (isPlainText) {
+    const text = await file.text();
+    return addTextBackgroundDoc({
+      sermonId,
+      ownerUserId,
+      title: name,
+      text,
+    });
   }
 
   let kind;

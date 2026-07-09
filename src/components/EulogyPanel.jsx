@@ -466,7 +466,7 @@ export default function EulogyPanel({
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                accept=".pdf,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png,text/plain,text/markdown"
                 multiple
                 className="hidden"
                 onChange={(e) => handleUpload(e.target.files)}
@@ -476,7 +476,7 @@ export default function EulogyPanel({
                 className="btn-secondary text-xs"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                title="Upload transcripts, letters, photos, scanned clippings (.pdf/.jpg/.png). Scans and images go to Claude vision."
+                title="Upload transcripts, letters, photos, scanned clippings (.pdf/.jpg/.png/.txt/.md). Text files are read directly; scans and images go to Claude vision."
               >
                 {uploading ? 'Uploading…' : '+ Upload files'}
               </button>

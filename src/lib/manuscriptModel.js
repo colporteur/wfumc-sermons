@@ -5,11 +5,13 @@
 // pick" (currently Sonnet 4.6). Pastor can opt into Opus 4.8 for
 // higher-quality manuscript work at higher cost / latency.
 //
-// This setting ONLY affects the two manuscript-revision call sites:
+// This setting affects the manuscript-writing call sites:
 //   - reviseSermonManuscript (the chat-revise loop)
 //   - reviseManuscriptSnippet (the highlight-and-revise flow)
-// Brainstorm, slide suggester, NRSVUe lookup, resource extraction,
-// etc. all continue to use the proxy default.
+//   - the Eulogy panel's outline / suggestion / narrative actions
+// Slide suggester, NRSVUe lookup, resource extraction, etc. continue
+// to use the proxy default. The Creative Studio has its own picker
+// (lib/creativeModel.js).
 //
 // If Anthropic publishes a different identifier than what we have
 // here, just update the `id` field — UI labels and storage key stay
@@ -27,6 +29,12 @@ export const MANUSCRIPT_MODEL_OPTIONS = [
     id: 'claude-opus-4-8',
     label: 'Opus 4.8 (slower, costlier, more thoughtful)',
     short: 'Opus 4.8',
+  },
+  {
+    key: 'fable-5',
+    id: 'claude-fable-5',
+    label: 'Fable 5 (most capable, costliest)',
+    short: 'Fable 5',
   },
 ];
 
