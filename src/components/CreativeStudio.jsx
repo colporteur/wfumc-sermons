@@ -12,12 +12,15 @@ import {
   randomEpigraph,
 } from '../lib/creativeTechniques';
 import {
-  CREATIVE_MODEL_OPTIONS,
   loadCreativeModelKey,
   saveCreativeModelKey,
-  creativeModelIdForKey,
-  creativeModelShortLabel,
 } from '../lib/creativeModel';
+import {
+  useModelOptions,
+  modelIdForOption,
+  shortLabelForOption,
+  displayKeyForOption,
+} from '../lib/aiModels';
 import {
   listCreativeSessions,
   createCreativeSession,
@@ -100,6 +103,9 @@ export default function CreativeStudio({
   const mode = active ? active.mode : localMode;
 
   const [modelKey, setModelKey] = useState(loadCreativeModelKey);
+  // Registry-driven options ('creative' surface); hardcoded fallback
+  // renders instantly. Managed in Bulletin App → Settings → AI Models.
+  const modelOptions = useModelOptions('creative');
 
   // ---- context mix --------------------------------------------------
   const [includeManuscript, setIncludeManuscript] = useState(true);
@@ -569,7 +575,7 @@ export default function CreativeStudio({
         setActiveId(session.id);
       }
 
-      const modelId = creativeModelIdForKey(modelKey);
+      const modelId = modelIdForOption(modelOptions, modelKey);
       const onResources = resources.filter((r) => r._on);
 
       // Background docs: text for extracted PDFs, vision blocks for
@@ -685,11 +691,11 @@ export default function CreativeStudio({
           <div className="flex items-center gap-2 shrink-0">
             <select
               className="input text-sm py-1"
-              value={modelKey}
+              value={displayKeyForOption(modelOptions, modelKey)}
               onChange={(e) => pickModel(e.target.value)}
-              title="Which Claude model handles Studio turns. Applies per call."
+              title="Which model handles Studio turns. Applies per call. Manage the list in Bulletin App → Settings → AI Models."
             >
-              {CREATIVE_MODEL_OPTIONS.map((opt) => (
+              {modelOptions.map((opt) => (
                 <option key={opt.key} value={opt.key} title={opt.hint}>
                   {opt.label}
                 </option>
@@ -1133,7 +1139,7 @@ export default function CreativeStudio({
                       {modeLabel(m.mode)}
                       {m.model
                         ? ` · ${
-                            CREATIVE_MODEL_OPTIONS.find((o) => o.id === m.model)
+                            modelOptions.find((o) => o.id === m.model)
                               ?.short || m.model
                           }`
                         : ' · Sonnet 4.6'}
@@ -1192,7 +1198,7 @@ export default function CreativeStudio({
               ))}
               {sending && (
                 <p className="text-sm text-gray-500 animate-pulse">
-                  {creativeModelShortLabel(modelKey)} is thinking…
+                  {shortLabelForOption(modelOptions, modelKey)} is thinking…
                 </p>
               )}
             </div>

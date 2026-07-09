@@ -25,8 +25,8 @@ import ManuscriptModelPicker from '../components/ManuscriptModelPicker.jsx';
 import {
   loadManuscriptModelKey,
   saveManuscriptModelKey,
-  modelIdForKey,
 } from '../lib/manuscriptModel';
+import { useModelOptions, modelIdForOption } from '../lib/aiModels';
 import ManuscriptEditor, {
   ParagraphNumberToggle,
 } from '../components/ManuscriptEditor.jsx';
@@ -193,6 +193,13 @@ export default function SermonWorkspace() {
   // reviseManuscriptSnippet (not Brainstorm / slide suggester / etc.).
   const [manuscriptModelKey, setManuscriptModelKey] = useState(() =>
     loadManuscriptModelKey()
+  );
+  // Registry-driven options ('manuscript' surface) with the hardcoded
+  // list as instant/offline fallback. See lib/aiModels.js.
+  const manuscriptModelOptions = useModelOptions('manuscript');
+  const manuscriptModelId = modelIdForOption(
+    manuscriptModelOptions,
+    manuscriptModelKey
   );
   const handleManuscriptModelChange = (newKey) => {
     setManuscriptModelKey(newKey);
@@ -425,7 +432,7 @@ export default function SermonWorkspace() {
           .filter((m) => m.kind !== 'note')
           .map((m) => ({ role: m.role, content: m.content })),
         instruction,
-        model: modelIdForKey(manuscriptModelKey),
+        model: manuscriptModelId,
       });
 
       if (!revised || !revised.trim()) {
@@ -894,7 +901,7 @@ export default function SermonWorkspace() {
         <EulogyPanel
           sermon={sermon}
           onSermonChange={(updated) => setSermon(updated)}
-          model={modelIdForKey(manuscriptModelKey)}
+          model={manuscriptModelId}
           voicePrompt={voicePrompt}
           isLocked={isLocked}
           onInsertNarrative={(text) => {
@@ -941,6 +948,7 @@ export default function SermonWorkspace() {
               value={manuscriptModelKey}
               onChange={handleManuscriptModelChange}
               disabled={sending}
+              options={manuscriptModelOptions}
             />
           </div>
           <div className="flex-1 overflow-y-auto pr-1 space-y-2">
@@ -1232,7 +1240,7 @@ export default function SermonWorkspace() {
         fullManuscript={manuscript || ''}
         sermon={sermon}
         voiceSystemPrompt={voicePrompt}
-        model={modelIdForKey(manuscriptModelKey)}
+        model={manuscriptModelId}
         onReplace={(revised) => {
           if (!reviseSelSnapshot) return;
           const before = (manuscript || '').slice(0, reviseSelSnapshot.start);

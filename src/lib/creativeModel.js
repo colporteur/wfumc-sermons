@@ -54,10 +54,10 @@ const STORAGE_KEY = 'wfumc-sermons-creative-model';
 
 export function loadCreativeModelKey() {
   try {
+    // No membership validation — the key may belong to a registry-added
+    // model (lib/aiModels.js). Unknown keys resolve to proxy default.
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved && CREATIVE_MODEL_OPTIONS.some((o) => o.key === saved)) {
-      return saved;
-    }
+    if (saved) return saved;
   } catch {
     /* localStorage unavailable — fall through to default */
   }

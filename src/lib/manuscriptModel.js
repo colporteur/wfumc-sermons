@@ -42,13 +42,13 @@ const STORAGE_KEY = 'wfumc-sermons-manuscript-model';
 
 export function loadManuscriptModelKey() {
   try {
+    // No membership validation here: the saved key may belong to a
+    // registry-added model (lib/aiModels.js) that isn't in the
+    // hardcoded fallback list. Unknown keys resolve safely to the
+    // proxy default at call time (modelIdForOption) and render as
+    // 'default' in selects (displayKeyForOption).
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (
-      saved &&
-      MANUSCRIPT_MODEL_OPTIONS.some((o) => o.key === saved)
-    ) {
-      return saved;
-    }
+    if (saved) return saved;
   } catch {
     // localStorage unavailable (private window, etc.) — fall through
     // to the default. Choice is ephemeral in that session.
