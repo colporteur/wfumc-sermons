@@ -294,6 +294,63 @@ export async function addUrlBackgroundDoc({ sermonId, ownerUserId, url }) {
   return data;
 }
 
+/**
+ * Re-fetch a 'url' background doc (obituary / tribute wall) and update
+ * the stored text. Tribute comments roll in over days — this lets the
+ * pastor recheck without re-adding the source.
+ *
+ * Returns { row, changed, newLineCount }:
+ *   changed      — whether the stored text differs from the fresh fetch
+ *   newLineCount — lines present in the fresh fetch that weren't there
+ *                  before (rough "new tributes" signal)
+ *
+ * The stored text is REPLACED with the fresh fetch (the page's current
+ * state is the truth); the diff numbers are for the pastor's notice.
+ */
+export async function refreshUrlBackgroundDoc(doc) {
+  if (doc.kind !== 'url' || !doc.source_url) {
+    throw new Error('Only URL sources can be rechecked.');
+  }
+  const { text } = await fetchUrlText(doc.source_url);
+  const fresh = (text || '').trim();
+  if (!fresh) {
+    throw new Error(
+      'The page came back empty this time — the site may be blocking automated fetches. The previously fetched text was kept.'
+    );
+  }
+  const capped =
+    fresh.length > EXTRACTED_TEXT_CAP
+      ? fresh.slice(0, EXTRACTED_TEXT_CAP) + '\n[… truncated at storage cap …]'
+      : fresh;
+
+  const old = (doc.extracted_text || '').trim();
+  const changed = capped !== old;
+  let newLineCount = 0;
+  if (changed) {
+    const oldLines = new Set(
+      old.split('\n').map((l) => l.trim()).filter((l) => l.length > 0)
+    );
+    for (const line of capped.split('\n')) {
+      const t = line.trim();
+      if (t.length > 0 && !oldLines.has(t)) newLineCount += 1;
+    }
+  }
+
+  const { data, error } = await withTimeout(
+    supabase
+      .from('sermon_background_docs')
+      .update({
+        extracted_text: capped,
+        file_size_bytes: capped.length,
+      })
+      .eq('id', doc.id)
+      .select('*')
+      .single()
+  );
+  if (error) throw error;
+  return { row: data, changed, newLineCount };
+}
+
 async function downloadDocBlob(doc) {
   const { data, error } = await withTimeout(
     supabase.storage.from(BUCKET).download(doc.file_path),

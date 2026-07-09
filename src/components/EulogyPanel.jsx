@@ -6,6 +6,7 @@ import {
   deleteBackgroundDoc,
   addTextBackgroundDoc,
   addUrlBackgroundDoc,
+  refreshUrlBackgroundDoc,
 } from '../lib/backgroundDocs';
 import {
   updateEulogyFields,
@@ -60,6 +61,8 @@ export default function EulogyPanel({
   const [pasteText, setPasteText] = useState('');
   const [urlDraft, setUrlDraft] = useState('');
   const [fetchingUrl, setFetchingUrl] = useState(false);
+  // Which url-source doc is currently being rechecked (id or null).
+  const [refreshingId, setRefreshingId] = useState(null);
   const [personQ, setPersonQ] = useState('');
   const [personResults, setPersonResults] = useState([]);
   const [searchingPerson, setSearchingPerson] = useState(false);
@@ -226,6 +229,33 @@ export default function EulogyPanel({
 
   function toggleDoc(id) {
     setDocs((cur) => cur.map((d) => (d.id === id ? { ...d, _on: !d._on } : d)));
+  }
+
+  // Recheck a URL source — tribute walls gather new comments over
+  // days, so the pastor can re-pull the page without re-adding it.
+  async function recheckUrlDoc(doc) {
+    setRefreshingId(doc.id);
+    setError(null);
+    try {
+      const { row, changed, newLineCount } = await refreshUrlBackgroundDoc(doc);
+      setDocs((cur) =>
+        cur.map((d) => (d.id === row.id ? { ...row, _on: d._on } : d))
+      );
+      if (!changed) {
+        setNotice('No changes since the last fetch.');
+      } else if (newLineCount > 0) {
+        setNotice(
+          `Updated — ${newLineCount} new line${newLineCount === 1 ? '' : 's'} since last fetch (new tributes, most likely). ` +
+            'Run "Update outline from sources" to fold them in.'
+        );
+      } else {
+        setNotice('Page content changed since the last fetch — stored text updated.');
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setRefreshingId(null);
+    }
   }
 
   async function removeDoc(doc) {
@@ -578,6 +608,17 @@ export default function EulogyPanel({
                     </button>
                     📄 {d.title}
                     <span className="text-[10px] uppercase">{docKindLabel(d)}</span>
+                    {d.kind === 'url' && (
+                      <button
+                        type="button"
+                        className="hover:text-sky-700 disabled:opacity-50"
+                        disabled={refreshingId === d.id}
+                        onClick={() => recheckUrlDoc(d)}
+                        title="Recheck this page — tribute walls collect new comments over time. Re-fetches and reports what's new."
+                      >
+                        {refreshingId === d.id ? '…' : '↻'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="hover:text-red-700"
