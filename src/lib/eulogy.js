@@ -17,8 +17,13 @@
 //                             outline as base) → detailed chronological
 //                             life outline
 //
-// Phase 2 will add: suggestEulogyScriptures, writeLifeNarrative,
-// writeScriptureNarrative.
+// Phase 2 exports:
+//   suggestEulogyScriptures — passages + rationales when no scripture
+//                             has been chosen yet
+//   writeLifeNarrative      — eulogy narrative from the pastor's
+//                             (edited) life outline
+//   writeScriptureNarrative — narrative connecting the life to the
+//                             chosen scripture's themes
 
 import { supabase, withTimeout } from './supabase';
 import { callClaude } from './claude';
@@ -228,4 +233,193 @@ export async function assembleLifeOutline({
   const text = extractText(response).trim();
   if (!text) throw new Error('Claude returned an empty outline. Try again.');
   return text;
+}
+
+// ---------------------------------------------------------------------
+// Scripture suggestions (AI action 2 — only when none chosen)
+// ---------------------------------------------------------------------
+
+const SUGGEST_SYSTEM = [
+  'You help a United Methodist pastor choose scripture for a funeral',
+  'or memorial service. Given the life outline and source material,',
+  'suggest passages whose themes genuinely resonate with THIS life —',
+  'not the stock funeral texts unless they truly fit (and if a stock',
+  'text like Psalm 23 or John 14 fits, say why for this person',
+  'specifically). Range across both testaments. Output STRICTLY as a',
+  'numbered list, one passage per line, in the exact format:',
+  '1. <Reference> — <one- or two-sentence rationale tied to the life>',
+  'No preamble, no closing commentary. 6 to 8 suggestions.',
+].join(' ');
+
+/**
+ * Suggest scripture passages for the eulogy. Returns
+ * [{ reference, rationale }]; also returns the raw text as a fallback
+ * for the UI in case parsing misses lines.
+ */
+export async function suggestEulogyScriptures({ sermon, docs, outline = '', model = null }) {
+  const onDocs = (docs || []).filter((d) => d._on !== false);
+  const { textBlock } = await buildBackgroundDocsContext(
+    // Text sources only — vision pages add latency without moving the
+    // needle on theme discernment when an outline exists.
+    onDocs.filter((d) => ['pdf_text', 'text', 'url'].includes(d.kind))
+  );
+  const parts = [
+    `# Eulogy subject\n${sermon.deceased_name || '(name not entered)'}`,
+  ];
+  if (outline.trim()) parts.push('# Life outline\n' + outline.trim());
+  if (textBlock) parts.push(textBlock);
+  if (!outline.trim() && !textBlock) {
+    throw new Error('Add sources or assemble the life outline first — suggestions need something to resonate with.');
+  }
+
+  const response = await callClaude(
+    {
+      messages: [
+        {
+          role: 'user',
+          content:
+            parts.join('\n\n---\n\n') +
+            '\n\n---\n\nSuggest scripture passages for this eulogy.',
+        },
+      ],
+      system: SUGGEST_SYSTEM,
+      max_tokens: 1200,
+      ...(model ? { model } : {}),
+    },
+    { timeoutMs: 90000 }
+  );
+  const raw = extractText(response).trim();
+  if (!raw) throw new Error('Claude returned no suggestions. Try again.');
+
+  const suggestions = [];
+  for (const line of raw.split('\n')) {
+    const m = line.match(/^\s*\d+[.)]\s*(.+?)\s+—\s+(.+)$/);
+    if (m) suggestions.push({ reference: m[1].trim(), rationale: m[2].trim() });
+  }
+  return { suggestions, raw };
+}
+
+// ---------------------------------------------------------------------
+// Narratives (AI actions 3 & 4)
+// ---------------------------------------------------------------------
+
+const NARRATIVE_COMMON = [
+  'Register: a eulogy delivered by the pastor at the funeral or',
+  'memorial service — warm, truthful, specific, unhurried; grief is',
+  'honored, laughter is allowed, the person is neither canonized nor',
+  'diminished. Oral style built for the ear: contractions, rhythm,',
+  'short sentences where weight is needed. Use the deceased\'s name',
+  'the way a pastor who knew them would. Draw ONLY on the outline and',
+  'sources — never invent biographical facts; where the outline flags',
+  '[ask family: …] or [sources differ: …], simply avoid that detail.',
+  'Output ONLY the narrative itself — no title, no headings, no',
+  'commentary before or after.',
+].join(' ');
+
+function buildNarrativeContext({ sermon, outline, docs }) {
+  const parts = [
+    `# Eulogy subject\n${sermon.deceased_name || '(name not entered)'}`,
+  ];
+  if (sermon.scripture_reference) {
+    parts.push(`# Chosen scripture\n${sermon.scripture_reference}`);
+  }
+  parts.push(
+    "# The pastor's life outline (authoritative — structure and facts)\n" +
+      outline.trim()
+  );
+  return { parts };
+}
+
+async function runNarrative({ system, parts, docs, instruction, model }) {
+  const onDocs = (docs || []).filter((d) => d._on !== false);
+  const { textBlock, imageBlocks } = await buildBackgroundDocsContext(onDocs);
+  if (textBlock) {
+    parts.push(
+      '# Supporting sources (color, quotes, texture — the outline rules on facts)\n' +
+        textBlock
+    );
+  }
+  const contextText = parts.join('\n\n---\n\n');
+  const content =
+    imageBlocks.length > 0
+      ? [
+          { type: 'text', text: contextText },
+          ...imageBlocks,
+          { type: 'text', text: instruction },
+        ]
+      : contextText + '\n\n---\n\n' + instruction;
+
+  const response = await callClaude(
+    {
+      messages: [{ role: 'user', content }],
+      system,
+      max_tokens: 4000,
+      ...(model ? { model } : {}),
+    },
+    { timeoutMs: 180000 }
+  );
+  const text = extractText(response).trim();
+  if (!text) throw new Error('Claude returned an empty narrative. Try again.');
+  return text;
+}
+
+/**
+ * AI action 3: narrative telling of the life, from the pastor's
+ * (edited) outline.
+ */
+export async function writeLifeNarrative({ sermon, outline, docs, voicePrompt = '', model = null }) {
+  if (!outline || !outline.trim()) {
+    throw new Error('Assemble (or write) the life outline first — the narrative is built from it.');
+  }
+  const system = [
+    'You write a eulogy narrative for a United Methodist pastor,',
+    'turning his detailed life outline into flowing prose that tells',
+    'the story of the life — its chapters, its threads, its texture.',
+    NARRATIVE_COMMON,
+    voicePrompt ? "PASTOR'S VOICE GUIDE:\n" + voicePrompt : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const { parts } = buildNarrativeContext({ sermon, outline, docs });
+  return runNarrative({
+    system,
+    parts,
+    docs,
+    instruction: 'Write the life narrative from the outline.',
+    model,
+  });
+}
+
+/**
+ * AI action 4: narrative connecting the life to the chosen scripture's
+ * themes, in a manner appropriate for a eulogy.
+ */
+export async function writeScriptureNarrative({ sermon, outline, docs, voicePrompt = '', model = null }) {
+  if (!sermon.scripture_reference || !sermon.scripture_reference.trim()) {
+    throw new Error('Choose a scripture first (enter one or use a suggestion).');
+  }
+  if (!outline || !outline.trim()) {
+    throw new Error('Assemble (or write) the life outline first.');
+  }
+  const system = [
+    'You write the scripture movement of a eulogy for a United',
+    'Methodist pastor: prose that connects THIS life to the themes and',
+    'content of the chosen scripture. Let the text and the life',
+    'illuminate each other — the passage should sound like it was',
+    'written with this person in mind, without forcing it. Gospel',
+    'comfort is spoken honestly: resurrection hope, not platitudes.',
+    NARRATIVE_COMMON,
+    voicePrompt ? "PASTOR'S VOICE GUIDE:\n" + voicePrompt : '',
+  ]
+    .filter(Boolean)
+    .join('\n\n');
+  const { parts } = buildNarrativeContext({ sermon, outline, docs });
+  return runNarrative({
+    system,
+    parts,
+    docs,
+    instruction:
+      'Write the narrative that connects this life to the chosen scripture.',
+    model,
+  });
 }

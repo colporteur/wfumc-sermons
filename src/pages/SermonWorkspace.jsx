@@ -895,6 +895,17 @@ export default function SermonWorkspace() {
           sermon={sermon}
           onSermonChange={(updated) => setSermon(updated)}
           model={modelIdForKey(manuscriptModelKey)}
+          voicePrompt={voicePrompt}
+          isLocked={isLocked}
+          onInsertNarrative={(text) => {
+            const body = (text || '').trim();
+            if (!body) return;
+            setManuscript((cur) =>
+              cur && cur.trim()
+                ? cur.replace(/\s+$/, '') + '\n\n' + body + '\n'
+                : body + '\n'
+            );
+          }}
         />
       )}
 

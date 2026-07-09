@@ -11,21 +11,35 @@ import {
   updateEulogyFields,
   buildPastoralRecordSource,
   assembleLifeOutline,
+  suggestEulogyScriptures,
+  writeLifeNarrative,
+  writeScriptureNarrative,
 } from '../lib/eulogy';
 import { searchPeople, personDisplayName } from '../lib/congregation';
 
 // Eulogy Mode panel — appears in the Sermon Workspace when
 // sermon.is_eulogy is true. Phase 1: subject fields, source material
 // (uploads / pasted text / obituary URL / Pastoral Records bridge),
-// and the editable life outline. Phase 2 adds scripture suggestions
-// and the two narrative writers.
+// and the editable life outline. Phase 2: scripture suggestions (only
+// while no scripture is chosen) and the two narrative writers, both of
+// which preview here and insert into the working manuscript.
 //
 // Props:
-//   sermon          - the eulogy sermon row
-//   onSermonChange  - (updatedRow) => void — parent replaces its state
-//   model           - model id from the Workspace's manuscript picker
-//                     (null = proxy default); outline assembly uses it
-export default function EulogyPanel({ sermon, onSermonChange, model }) {
+//   sermon            - the eulogy sermon row
+//   onSermonChange    - (updatedRow) => void — parent replaces its state
+//   model             - model id from the Workspace's manuscript picker
+//                       (null = proxy default); all AI actions use it
+//   voicePrompt       - the pastor's voice guide (parent loads it)
+//   isLocked          - manuscript lock state (blocks insertion)
+//   onInsertNarrative - (text) => void — parent appends to manuscript
+export default function EulogyPanel({
+  sermon,
+  onSermonChange,
+  model,
+  voicePrompt,
+  isLocked,
+  onInsertNarrative,
+}) {
   const { user } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
 
@@ -55,6 +69,16 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
   const [outlineDirty, setOutlineDirty] = useState(false);
   const [assembling, setAssembling] = useState(false);
   const [savingOutline, setSavingOutline] = useState(false);
+
+  // Scripture suggestions (Phase 2).
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestions, setSuggestions] = useState(null); // null = not run
+  const [suggestionsRaw, setSuggestionsRaw] = useState('');
+
+  // Narratives (Phase 2). One preview slot — writing a new narrative
+  // replaces the preview, never the manuscript (insertion is explicit).
+  const [writing, setWriting] = useState(null); // null | 'life' | 'scripture'
+  const [narrative, setNarrative] = useState(null); // { kind, text }
 
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
@@ -265,6 +289,74 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
     }
   }
 
+  // ---- scripture suggestions (Phase 2) --------------------------------
+
+  async function handleSuggestScriptures() {
+    setSuggesting(true);
+    setError(null);
+    try {
+      const { suggestions: parsed, raw } = await suggestEulogyScriptures({
+        sermon,
+        docs: docs.filter((d) => d._on),
+        outline: outlineDraft,
+        model,
+      });
+      setSuggestions(parsed);
+      setSuggestionsRaw(raw);
+      if (!parsed.length) {
+        setNotice('Suggestions came back unstructured — showing them as text.');
+      }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSuggesting(false);
+    }
+  }
+
+  function useSuggestion(reference) {
+    setScriptureDraft(reference);
+    saveFields({ scripture_reference: reference });
+    setSuggestions(null);
+    setSuggestionsRaw('');
+    setNotice(`Scripture set: ${reference}`);
+  }
+
+  // ---- narratives (Phase 2) --------------------------------------------
+
+  async function handleWriteNarrative(kind) {
+    setWriting(kind);
+    setError(null);
+    try {
+      const args = {
+        sermon,
+        outline: outlineDraft,
+        docs: docs.filter((d) => d._on),
+        voicePrompt,
+        model,
+      };
+      const text =
+        kind === 'life'
+          ? await writeLifeNarrative(args)
+          : await writeScriptureNarrative(args);
+      setNarrative({ kind, text });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setWriting(null);
+    }
+  }
+
+  function insertNarrative() {
+    if (!narrative) return;
+    if (isLocked) {
+      window.alert('The manuscript is finalized. Unlock it to insert.');
+      return;
+    }
+    onInsertNarrative?.(narrative.text);
+    setNarrative(null);
+    setNotice('Inserted at the end of the manuscript.');
+  }
+
   // ---- render ---------------------------------------------------------
 
   return (
@@ -306,7 +398,7 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
               />
             </label>
             <label className="text-xs text-gray-600">
-              Scripture (optional — leave blank to get suggestions in Phase 2)
+              Scripture (optional — leave blank and use Suggest Scripture below)
               <input
                 className="input text-sm mt-0.5"
                 value={scriptureDraft}
@@ -322,6 +414,50 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
               />
             </label>
           </div>
+
+          {/* Scripture suggestions — only while no scripture is chosen */}
+          {!(sermon.scripture_reference || '').trim() && (
+            <div className="space-y-1">
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={handleSuggestScriptures}
+                disabled={suggesting}
+                title="Suggest passages whose themes resonate with this particular life — drawn from the outline and sources."
+              >
+                {suggesting ? 'Discerning…' : '✨ Suggest Scripture'}
+              </button>
+              {suggestions && suggestions.length > 0 && (
+                <ul className="space-y-1">
+                  {suggestions.map((s, i) => (
+                    <li
+                      key={i}
+                      className="flex items-start gap-2 text-sm bg-amber-50/60 rounded px-2 py-1.5"
+                    >
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs shrink-0"
+                        onClick={() => useSuggestion(s.reference)}
+                        title="Set this as the eulogy's scripture"
+                      >
+                        Use
+                      </button>
+                      <span>
+                        <span className="font-medium">{s.reference}</span>
+                        {' — '}
+                        <span className="text-gray-700">{s.rationale}</span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {suggestions && suggestions.length === 0 && suggestionsRaw && (
+                <div className="text-sm whitespace-pre-wrap bg-amber-50/60 rounded px-2 py-1.5">
+                  {suggestionsRaw}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Sources */}
           <div className="space-y-2">
@@ -433,7 +569,7 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
                     }`}
                     title={
                       (d._on
-                        ? 'ON — feeds outline assembly (and the narratives in Phase 2). '
+                        ? 'ON — feeds outline assembly, scripture suggestions, and the narratives. '
                         : 'OFF — held aside. ') + `Kind: ${docKindLabel(d)}.`
                     }
                   >
@@ -505,6 +641,86 @@ export default function EulogyPanel({ sermon, onSermonChange, model }) {
                 setOutlineDirty(true);
               }}
             />
+          </div>
+
+          {/* Narratives (Phase 2) */}
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-gray-700">
+                Narratives
+              </span>
+              <button
+                type="button"
+                className="btn-primary text-xs"
+                onClick={() => handleWriteNarrative('life')}
+                disabled={writing !== null || !outlineDraft.trim()}
+                title={
+                  !outlineDraft.trim()
+                    ? 'Assemble or write the life outline first.'
+                    : 'Write the story of the life from your (edited) outline. Previews below — nothing touches the manuscript until you insert.'
+                }
+              >
+                {writing === 'life' ? 'Writing…' : '📄 Write life narrative'}
+              </button>
+              <button
+                type="button"
+                className="btn-primary text-xs"
+                onClick={() => handleWriteNarrative('scripture')}
+                disabled={
+                  writing !== null ||
+                  !outlineDraft.trim() ||
+                  !(sermon.scripture_reference || '').trim()
+                }
+                title={
+                  !(sermon.scripture_reference || '').trim()
+                    ? 'Choose a scripture first (enter one or use a suggestion).'
+                    : !outlineDraft.trim()
+                    ? 'Assemble or write the life outline first.'
+                    : "Write the movement that connects this life to the chosen text's themes. Previews below."
+                }
+              >
+                {writing === 'scripture'
+                  ? 'Writing…'
+                  : '📄 Write Scripture connection'}
+              </button>
+            </div>
+            {narrative && (
+              <div className="border rounded-md p-2 space-y-2 bg-gray-50">
+                <p className="text-xs text-gray-500">
+                  {narrative.kind === 'life'
+                    ? 'Life narrative'
+                    : `Scripture connection — ${sermon.scripture_reference}`}{' '}
+                  (preview — not in the manuscript yet)
+                </p>
+                <div className="text-sm font-serif whitespace-pre-wrap max-h-80 overflow-y-auto">
+                  {narrative.text}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    className="btn-primary text-xs"
+                    onClick={insertNarrative}
+                  >
+                    Insert into manuscript
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => handleWriteNarrative(narrative.kind)}
+                    disabled={writing !== null}
+                  >
+                    Rewrite
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => setNarrative(null)}
+                  >
+                    Discard
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {(error || notice) && (
