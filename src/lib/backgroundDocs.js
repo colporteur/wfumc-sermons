@@ -14,6 +14,7 @@
 import { supabase, withTimeout } from './supabase';
 import { extractPdfText } from './pdfText';
 import { prepareImageForUpload, blobToBase64 } from './imageHelpers';
+import { fetchUrlText } from './urlFetch';
 
 const BUCKET = 'background-docs';
 
@@ -198,11 +199,83 @@ export async function deleteBackgroundDoc(doc) {
     supabase.from('sermon_background_docs').delete().eq('id', doc.id)
   );
   if (error) throw error;
-  try {
-    await supabase.storage.from(BUCKET).remove([doc.file_path]);
-  } catch {
-    /* orphaned bytes are harmless; bucket is private + owner-scoped */
+  if (doc.file_path) {
+    try {
+      await supabase.storage.from(BUCKET).remove([doc.file_path]);
+    } catch {
+      /* orphaned bytes are harmless; bucket is private + owner-scoped */
+    }
   }
+}
+
+// ---------------------------------------------------------------------
+// Storage-less kinds (Eulogy Mode / migration 0071): pasted text and
+// fetched URLs. Body lives in extracted_text; no bucket object.
+// ---------------------------------------------------------------------
+
+/**
+ * Save pasted material (conversation notes, memories, transcript text)
+ * as a background doc of kind 'text'.
+ */
+export async function addTextBackgroundDoc({ sermonId, ownerUserId, title, text }) {
+  const body = (text || '').trim();
+  if (!body) throw new Error('Nothing to save — the pasted text is empty.');
+  const capped =
+    body.length > EXTRACTED_TEXT_CAP
+      ? body.slice(0, EXTRACTED_TEXT_CAP) + '\n[… truncated at storage cap …]'
+      : body;
+  const { data, error } = await withTimeout(
+    supabase
+      .from('sermon_background_docs')
+      .insert({
+        sermon_id: sermonId,
+        owner_user_id: ownerUserId,
+        title: (title || '').trim() || 'Pasted notes',
+        file_path: null,
+        mime_type: 'text/plain',
+        file_size_bytes: capped.length,
+        kind: 'text',
+        extracted_text: capped,
+      })
+      .select('*')
+      .single()
+  );
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Fetch a URL server-side (url-fetch Edge Function) and save the page
+ * text as a background doc of kind 'url'. Used for obituaries and
+ * tribute pages.
+ */
+export async function addUrlBackgroundDoc({ sermonId, ownerUserId, url }) {
+  const { text, title, finalUrl } = await fetchUrlText(url);
+  const body = (text || '').trim();
+  if (!body) throw new Error('That page came back empty — try pasting its text instead.');
+  const capped =
+    body.length > EXTRACTED_TEXT_CAP
+      ? body.slice(0, EXTRACTED_TEXT_CAP) + '\n[… truncated at storage cap …]'
+      : body;
+  const { data, error } = await withTimeout(
+    supabase
+      .from('sermon_background_docs')
+      .insert({
+        sermon_id: sermonId,
+        owner_user_id: ownerUserId,
+        title: (title || '').trim() || finalUrl || url,
+        file_path: null,
+        mime_type: 'text/plain',
+        file_size_bytes: capped.length,
+        kind: 'url',
+        source_url: finalUrl || url,
+        extracted_text: capped,
+      })
+      .select('*')
+      .single()
+  );
+  if (error) throw error;
+  return data;
 }
 
 async function downloadDocBlob(doc) {
@@ -240,14 +313,16 @@ export async function buildBackgroundDocsContext(docs) {
       doc.notes ? `\nPastor's note: ${doc.notes}` : ''
     }`;
 
-    if (doc.kind === 'pdf_text') {
+    if (doc.kind === 'pdf_text' || doc.kind === 'text' || doc.kind === 'url') {
       let body = (doc.extracted_text || '').trim();
       if (body.length > PER_DOC_TEXT_PROMPT_CAP) {
         body =
           body.slice(0, PER_DOC_TEXT_PROMPT_CAP) +
           '\n[… truncated for prompt length …]';
       }
-      textParts.push(header + '\n\n' + body);
+      const urlLine =
+        doc.kind === 'url' && doc.source_url ? `\nSource: ${doc.source_url}` : '';
+      textParts.push(header + urlLine + '\n\n' + body);
       continue;
     }
 

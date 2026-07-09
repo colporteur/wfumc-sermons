@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase, withTimeout } from '../lib/supabase';
+import { createEulogy } from '../lib/eulogy';
 import { booksFromReference } from '../lib/scripture';
 import { fetchSlideImageCountsByUser } from '../lib/sermonSlideImages';
 import { fetchStashedBlockLiveCountsByUser } from '../lib/sermonStashedBlocks';
@@ -70,6 +71,23 @@ function searchFromFilters(f) {
 
 export default function SermonList() {
   const { user } = useAuth();
+  const navigate = useNavigate();
+
+  // "+ New Eulogy": create the eulogy-flagged sermon row and land in
+  // the Workspace, where the EulogyPanel takes over (name, sources,
+  // life outline). See lib/eulogy.js.
+  const [creatingEulogy, setCreatingEulogy] = useState(false);
+  const handleNewEulogy = async () => {
+    if (!user?.id || creatingEulogy) return;
+    setCreatingEulogy(true);
+    try {
+      const row = await createEulogy({ ownerUserId: user.id });
+      navigate(`/sermons/${row.id}/workspace`);
+    } catch (e) {
+      setError(e.message || String(e));
+      setCreatingEulogy(false);
+    }
+  };
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [sermons, setSermons] = useState([]);
@@ -336,6 +354,15 @@ export default function SermonList() {
           >
             + New sermon
           </Link>
+          <button
+            type="button"
+            onClick={handleNewEulogy}
+            disabled={creatingEulogy}
+            className="btn-secondary disabled:opacity-50"
+            title="Start a eulogy in the Workspace — gather sources (transcripts, obituary, notes, Pastoral Records), assemble the life outline, then draft."
+          >
+            {creatingEulogy ? 'Creating…' : '+ New eulogy'}
+          </button>
           <Link
             to="/sermons/import-manuscripts"
             className="btn-secondary"

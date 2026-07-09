@@ -19,6 +19,7 @@ import PrintExportModal from '../components/PrintExportModal.jsx';
 import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 import WorkspaceExtractResources from '../components/WorkspaceExtractResources.jsx';
 import CreativeStudio from '../components/CreativeStudio.jsx';
+import EulogyPanel from '../components/EulogyPanel.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import ManuscriptModelPicker from '../components/ManuscriptModelPicker.jsx';
 import {
@@ -885,6 +886,16 @@ export default function SermonWorkspace() {
         <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
           {error}
         </p>
+      )}
+
+      {/* Eulogy Mode — subject, sources, and life outline (only for
+          eulogy-flagged sermons; see components/EulogyPanel.jsx) */}
+      {sermon.is_eulogy && (
+        <EulogyPanel
+          sermon={sermon}
+          onSermonChange={(updated) => setSermon(updated)}
+          model={modelIdForKey(manuscriptModelKey)}
+        />
       )}
 
       {/* Resources for this turn — collapsible panel above the chat / manuscript */}
