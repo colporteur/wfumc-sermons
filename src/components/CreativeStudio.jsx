@@ -1047,6 +1047,37 @@ export default function CreativeStudio({
                     >
                       {bgUploading ? 'Uploading…' : '+ Background document'}
                     </button>
+                    <button
+                      className="text-gray-500 hover:text-sky-700 disabled:opacity-50"
+                      onClick={async () => {
+                        // Sources live per-sermon in Supabase — this
+                        // pulls in anything uploaded from another
+                        // device (phone, tablet) without a page
+                        // reload. On/off choices survive by id.
+                        setBgUploading(true);
+                        try {
+                          const rows = await listBackgroundDocs(sermon.id);
+                          setBgDocs((cur) => {
+                            const state = new Map(cur.map((d) => [d.id, d]));
+                            return rows.map((r) => {
+                              const prev = state.get(r.id);
+                              return prev
+                                ? { ...r, _on: prev._on, _visionCache: prev._visionCache }
+                                : { ...r, _on: true };
+                            });
+                          });
+                          setNotice('Background documents refreshed.');
+                        } catch (e) {
+                          setError(e.message);
+                        } finally {
+                          setBgUploading(false);
+                        }
+                      }}
+                      disabled={bgUploading}
+                      title="Refresh from the database — pulls in documents uploaded from your phone or another device."
+                    >
+                      ↻
+                    </button>
                     {bgDocs.length === 0 && !bgUploading && (
                       <span className="text-xs text-gray-500">
                         Articles, commentary snapshots, reference images —

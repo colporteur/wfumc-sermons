@@ -63,6 +63,10 @@ export default function EulogyPanel({
   const [fetchingUrl, setFetchingUrl] = useState(false);
   // Which url-source doc is currently being rechecked (id or null).
   const [refreshingId, setRefreshingId] = useState(null);
+  // Which source is open in the preview card (id or null).
+  const [previewDocId, setPreviewDocId] = useState(null);
+  // Re-pulling the source list (e.g., after uploading from the phone).
+  const [reloadingDocs, setReloadingDocs] = useState(false);
   const [personQ, setPersonQ] = useState('');
   const [personResults, setPersonResults] = useState([]);
   const [searchingPerson, setSearchingPerson] = useState(false);
@@ -231,6 +235,31 @@ export default function EulogyPanel({
     setDocs((cur) => cur.map((d) => (d.id === id ? { ...d, _on: !d._on } : d)));
   }
 
+  // Re-pull the source list from the database. Sources are per-sermon
+  // rows in Supabase, so anything uploaded from another device (phone
+  // in the hospital hallway, tablet at home) appears here — this
+  // button pulls it in without a page reload. Existing on/off choices
+  // are preserved by id.
+  async function reloadDocs() {
+    setReloadingDocs(true);
+    setError(null);
+    try {
+      const rows = await listBackgroundDocs(sermon.id);
+      setDocs((cur) => {
+        const state = new Map(cur.map((d) => [d.id, d]));
+        return rows.map((r) => {
+          const prev = state.get(r.id);
+          return prev ? { ...r, _on: prev._on, _visionCache: prev._visionCache } : { ...r, _on: true };
+        });
+      });
+      setNotice('Sources refreshed from the database.');
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setReloadingDocs(false);
+    }
+  }
+
   // Recheck a URL source — tribute walls gather new comments over
   // days, so the pastor can re-pull the page without re-adding it.
   async function recheckUrlDoc(doc) {
@@ -263,6 +292,7 @@ export default function EulogyPanel({
     try {
       await deleteBackgroundDoc(doc);
       setDocs((cur) => cur.filter((d) => d.id !== doc.id));
+      setPreviewDocId((cur) => (cur === doc.id ? null : cur));
     } catch (e) {
       setError(e.message);
     }
@@ -493,6 +523,15 @@ export default function EulogyPanel({
           <div className="space-y-2">
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <span className="font-medium text-gray-700">Sources:</span>
+              <button
+                type="button"
+                className="text-gray-500 hover:text-sky-700 disabled:opacity-50"
+                onClick={reloadDocs}
+                disabled={reloadingDocs}
+                title="Refresh the source list from the database — pulls in anything you uploaded from your phone or another device."
+              >
+                {reloadingDocs ? '…' : '↻'}
+              </button>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -606,7 +645,19 @@ export default function EulogyPanel({
                     <button type="button" onClick={() => toggleDoc(d.id)}>
                       {d._on ? '●' : '○'}
                     </button>
-                    📄 {d.title}
+                    📄{' '}
+                    <button
+                      type="button"
+                      className={`hover:underline ${
+                        previewDocId === d.id ? 'font-semibold' : ''
+                      }`}
+                      title="Click to preview this source below"
+                      onClick={() =>
+                        setPreviewDocId((cur) => (cur === d.id ? null : d.id))
+                      }
+                    >
+                      {d.title}
+                    </button>
                     <span className="text-[10px] uppercase">{docKindLabel(d)}</span>
                     {d.kind === 'url' && (
                       <button
@@ -630,6 +681,70 @@ export default function EulogyPanel({
                 ))}
               </div>
             )}
+
+            {/* Source preview — read before you decide */}
+            {previewDocId &&
+              (() => {
+                const d = docs.find((x) => x.id === previewDocId);
+                if (!d) return null;
+                const hasText =
+                  d.kind === 'text' || d.kind === 'url' || d.kind === 'pdf_text';
+                return (
+                  <div className="border rounded-md p-2 space-y-1 bg-sky-50/40">
+                    <div className="flex flex-wrap items-baseline gap-2 text-xs text-gray-600">
+                      <span className="text-sm font-medium text-gray-800">
+                        {d.title}
+                      </span>
+                      <span className="uppercase">{docKindLabel(d)}</span>
+                      {d.page_count && <span>{d.page_count} pages</span>}
+                      {d.source_url && (
+                        <a
+                          className="underline text-sky-700"
+                          href={d.source_url}
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          open original
+                        </a>
+                      )}
+                    </div>
+                    {hasText ? (
+                      <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto font-serif">
+                        {(d.extracted_text || '').trim() || '(no text extracted)'}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 italic">
+                        {d.kind === 'pdf_scanned'
+                          ? 'Scanned PDF — no text layer to preview; its first pages go to Claude as images.'
+                          : 'Image — no text to preview; it goes to Claude as an image.'}
+                      </p>
+                    )}
+                    <div className="flex gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={() => toggleDoc(d.id)}
+                      >
+                        {d._on ? 'Switch off' : 'Switch on'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={() => removeDoc(d)}
+                      >
+                        Remove
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary text-xs"
+                        onClick={() => setPreviewDocId(null)}
+                      >
+                        Close
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
           </div>
 
           {/* Outline */}

@@ -38,6 +38,9 @@ export default function WorkspaceResources({
   const [searching, setSearching] = useState(false);
 
   const [error, setError] = useState(null);
+  // Which selected resource is open in the preview card (id or null) —
+  // read the full text before deciding it stays on the turn.
+  const [previewId, setPreviewId] = useState(null);
 
   // Debounced free-text search.
   useEffect(() => {
@@ -159,9 +162,18 @@ export default function WorkspaceResources({
               key={r.id}
               className="inline-flex items-center gap-1 bg-umc-50 border border-umc-200 rounded-full px-2 py-0.5 text-xs text-umc-900"
             >
-              <span className="truncate max-w-[14rem]" title={r.title}>
+              <button
+                type="button"
+                className={`truncate max-w-[14rem] hover:underline text-left ${
+                  previewId === r.id ? 'font-semibold' : ''
+                }`}
+                title="Click to read this resource's full text below"
+                onClick={() =>
+                  setPreviewId((cur) => (cur === r.id ? null : r.id))
+                }
+              >
                 {r.title || '(untitled)'}
-              </span>
+              </button>
               <button
                 type="button"
                 onClick={() => removeOne(r.id)}
@@ -175,6 +187,51 @@ export default function WorkspaceResources({
           ))}
         </div>
       )}
+
+      {/* Resource preview — read before you decide */}
+      {previewId &&
+        (() => {
+          const r = selectedResources.find((x) => x.id === previewId);
+          if (!r) return null;
+          return (
+            <div className="border border-umc-200 rounded-md p-2 space-y-1 bg-umc-50/40">
+              <div className="flex flex-wrap items-baseline gap-2 text-xs text-gray-600">
+                <span className="text-sm font-medium text-gray-800">
+                  {r.title || '(untitled)'}
+                </span>
+                {r.resource_type && <span>{r.resource_type}</span>}
+                {r.tone && <span>tone: {r.tone}</span>}
+                {r.scripture_refs && <span>{r.scripture_refs}</span>}
+                {Array.isArray(r.themes) && r.themes.length > 0 && (
+                  <span>themes: {r.themes.join(', ')}</span>
+                )}
+                {r.source && <span>— {r.source}</span>}
+              </div>
+              <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto font-serif">
+                {(r.content || '').trim() || '(no text content)'}
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    removeOne(r.id);
+                    setPreviewId(null);
+                  }}
+                >
+                  Remove from this turn
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => setPreviewId(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          );
+        })()}
 
       {error && (
         <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1">
