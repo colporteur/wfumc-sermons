@@ -56,6 +56,7 @@ import {
   personDisplayName,
   buildCongregationContext,
 } from '../lib/congregation';
+import { groupDocsBySets } from '../lib/commentarySets';
 
 // Creative Studio — full-screen brainstorming overlay for the Sermon
 // Workspace. Operationalizes the pastor's twelve sermon-tips documents
@@ -361,6 +362,31 @@ export default function CreativeStudio({
     try {
       await deleteBackgroundDoc(doc);
       setBgDocs((cur) => cur.filter((d) => d.id !== doc.id));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  // Commentary-set chips: all pages toggle/remove as one unit.
+  function toggleBgSet(g, on) {
+    const ids = new Set(g.docs.map((d) => d.id));
+    setBgDocs((cur) => cur.map((d) => (ids.has(d.id) ? { ...d, _on: on } : d)));
+  }
+
+  async function removeBgSet(g) {
+    if (
+      !window.confirm(
+        `Remove all ${g.docs.length} page(s) of "${g.title}" from this sermon? (The set itself stays in your library.)`
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const doc of g.docs) {
+        await deleteBackgroundDoc(doc);
+      }
+      const ids = new Set(g.docs.map((d) => d.id));
+      setBgDocs((cur) => cur.filter((d) => !ids.has(d.id)));
     } catch (e) {
       setError(e.message);
     }
@@ -1087,7 +1113,35 @@ export default function CreativeStudio({
                   </div>
                   {bgDocs.length > 0 && (
                     <div className="flex flex-wrap gap-1">
-                      {bgDocs.map((d) => (
+                      {groupDocsBySets(bgDocs).sets.map((g) => {
+                        const allOn = g.docs.every((d) => d._on);
+                        return (
+                          <span
+                            key={g.set_id}
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                              allOn
+                                ? 'bg-sky-100 text-sky-900'
+                                : 'bg-gray-100 text-gray-500'
+                            }`}
+                            title={`Commentary set — ${g.docs.length} page(s) in upload order, sent to Claude as one labeled sequence. Dot toggles all pages.`}
+                          >
+                            <button onClick={() => toggleBgSet(g, !allOn)}>
+                              {allOn ? '●' : '○'}
+                            </button>
+                            📄 {g.title}
+                            <span className="text-[10px] uppercase">
+                              {g.docs.length}-pg set
+                            </span>
+                            <button
+                              className="hover:text-red-700"
+                              onClick={() => removeBgSet(g)}
+                            >
+                              ✕
+                            </button>
+                          </span>
+                        );
+                      })}
+                      {groupDocsBySets(bgDocs).singles.map((d) => (
                         <span
                           key={d.id}
                           className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${

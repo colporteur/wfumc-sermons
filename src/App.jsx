@@ -27,6 +27,7 @@ import SermonNewWorkspace from './pages/SermonNewWorkspace.jsx';
 import SermonSlideDeck from './pages/SermonSlideDeck.jsx';
 import ImportManuscripts from './pages/ImportManuscripts.jsx';
 import ImportManuscriptsReviewPreachings from './pages/ImportManuscriptsReviewPreachings.jsx';
+import QuickAddSource from './pages/QuickAddSource.jsx';
 
 export default function App() {
   return (
@@ -50,6 +51,7 @@ export default function App() {
           path="/sermons/import-manuscripts/review-preachings"
           element={<ImportManuscriptsReviewPreachings />}
         />
+        <Route path="/quick-add" element={<QuickAddSource />} />
         <Route path="/resources" element={<ResourceList />} />
         <Route path="/resources/new" element={<ResourceNew />} />
         <Route path="/resources/extract" element={<ResourceExtract />} />

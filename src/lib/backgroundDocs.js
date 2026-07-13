@@ -15,6 +15,7 @@ import { supabase, withTimeout } from './supabase';
 import { extractPdfText } from './pdfText';
 import { prepareImageForUpload, blobToBase64 } from './imageHelpers';
 import { fetchUrlText } from './urlFetch';
+import { groupDocsBySets } from './commentarySets';
 
 const BUCKET = 'background-docs';
 
@@ -27,7 +28,9 @@ const SCANNED_CHARS_PER_PAGE = 200;
 const EXTRACTED_TEXT_CAP = 60000; // chars stored per pdf_text doc
 const PER_DOC_TEXT_PROMPT_CAP = 16000; // chars of a doc sent per turn
 const MAX_VISION_PAGES_PER_DOC = 4; // scanned-PDF pages rendered per doc
-const MAX_VISION_BLOCKS_PER_TURN = 6; // total images across all docs
+// Raised from 6 → 10 for commentary sets (migration 0074): a set of
+// consecutive page photos should usually fit in one turn.
+const MAX_VISION_BLOCKS_PER_TURN = 10; // total images across all docs
 
 // ---------------------------------------------------------------------
 // pdfjs page rendering (scanned PDFs → JPEG blobs)
@@ -90,7 +93,9 @@ export async function listBackgroundDocs(sermonId) {
   const { data, error } = await withTimeout(
     supabase
       .from('sermon_background_docs')
-      .select('*')
+      // commentary_sets(title) rides along so the UI can group page
+      // photos into one chip per set (see lib/commentarySets.js).
+      .select('*, commentary_sets(title)')
       .eq('sermon_id', sermonId)
       .order('created_at', { ascending: false })
   );
@@ -103,7 +108,7 @@ export async function listBackgroundDocs(sermonId) {
  * Classifies it, extracts text when possible, stores file + row.
  * Returns the inserted row.
  */
-export async function uploadBackgroundDoc({ sermonId, ownerUserId, file }) {
+export async function uploadBackgroundDoc({ sermonId, ownerUserId, file, commentarySetId = null }) {
   if (!file) throw new Error('No file provided.');
   const name = file.name || 'document';
   const lower = name.toLowerCase();
@@ -194,8 +199,9 @@ export async function uploadBackgroundDoc({ sermonId, ownerUserId, file }) {
         kind,
         extracted_text: extractedText,
         page_count: pageCount,
+        commentary_set_id: commentarySetId,
       })
-      .select('*')
+      .select('*, commentary_sets(title)')
       .single()
   );
   if (error) {
@@ -381,10 +387,35 @@ export async function buildBackgroundDocsContext(docs) {
   const textParts = [];
   const imageBlocks = [];
 
-  for (const doc of on) {
-    const header = `## Background document: ${doc.title}${
-      doc.notes ? `\nPastor's note: ${doc.notes}` : ''
-    }`;
+  // Commentary sets (migration 0074): page photos tagged with a set
+  // travel as one labeled, ordered sequence; everything else renders
+  // as before. Build the processing order: singles first, then each
+  // set's pages in upload order under a set banner.
+  const { singles, sets } = groupDocsBySets(on);
+  const workList = [];
+  for (const doc of singles) {
+    workList.push({ doc, header: null });
+  }
+  for (const g of sets) {
+    textParts.push(
+      `## Commentary set: ${g.title} — ${g.docs.length} page${
+        g.docs.length === 1 ? '' : 's'
+      }, in reading order`
+    );
+    g.docs.forEach((doc, i) => {
+      workList.push({
+        doc,
+        header: `### ${g.title} — page ${i + 1} of ${g.docs.length} (${doc.title})`,
+      });
+    });
+  }
+
+  for (const { doc, header: headerOverride } of workList) {
+    const header =
+      headerOverride ??
+      `## Background document: ${doc.title}${
+        doc.notes ? `\nPastor's note: ${doc.notes}` : ''
+      }`;
 
     if (doc.kind === 'pdf_text' || doc.kind === 'text' || doc.kind === 'url') {
       let body = (doc.extracted_text || '').trim();

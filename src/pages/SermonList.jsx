@@ -364,6 +364,13 @@ export default function SermonList() {
             {creatingEulogy ? 'Creating…' : '+ New eulogy'}
           </button>
           <Link
+            to="/quick-add"
+            className="btn-secondary"
+            title="Phone-friendly page: snap commentary pages or upload files straight into a sermon's sources."
+          >
+            📥 Quick add
+          </Link>
+          <Link
             to="/sermons/import-manuscripts"
             className="btn-secondary"
             title="Batch-import a folder of manuscript files (.docx / .enex / .txt) and match them to existing sermon detail pages."

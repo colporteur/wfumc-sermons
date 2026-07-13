@@ -17,6 +17,7 @@ import {
   writeScriptureNarrative,
 } from '../lib/eulogy';
 import { searchPeople, personDisplayName } from '../lib/congregation';
+import { groupDocsBySets } from '../lib/commentarySets';
 
 // Eulogy Mode panel — appears in the Sermon Workspace when
 // sermon.is_eulogy is true. Phase 1: subject fields, source material
@@ -293,6 +294,31 @@ export default function EulogyPanel({
       await deleteBackgroundDoc(doc);
       setDocs((cur) => cur.filter((d) => d.id !== doc.id));
       setPreviewDocId((cur) => (cur === doc.id ? null : cur));
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  function toggleDocSet(g, on) {
+    const ids = new Set(g.docs.map((d) => d.id));
+    setDocs((cur) => cur.map((d) => (ids.has(d.id) ? { ...d, _on: on } : d)));
+  }
+
+  async function removeDocSet(g) {
+    if (
+      !window.confirm(
+        `Remove all ${g.docs.length} page(s) of "${g.title}" from this eulogy? (The set itself stays in your library.)`
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const doc of g.docs) {
+        await deleteBackgroundDoc(doc);
+      }
+      const ids = new Set(g.docs.map((d) => d.id));
+      setDocs((cur) => cur.filter((d) => !ids.has(d.id)));
+      setPreviewDocId(null);
     } catch (e) {
       setError(e.message);
     }
@@ -628,7 +654,36 @@ export default function EulogyPanel({
 
             {docs.length > 0 && (
               <div className="flex flex-wrap gap-1">
-                {docs.map((d) => (
+                {groupDocsBySets(docs).sets.map((g) => {
+                  const allOn = g.docs.every((d) => d._on);
+                  return (
+                    <span
+                      key={g.set_id}
+                      className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
+                        allOn
+                          ? 'bg-sky-100 text-sky-900'
+                          : 'bg-gray-100 text-gray-500'
+                      }`}
+                      title={`Commentary set — ${g.docs.length} page(s) in upload order, sent as one labeled sequence. Dot toggles all pages.`}
+                    >
+                      <button type="button" onClick={() => toggleDocSet(g, !allOn)}>
+                        {allOn ? '●' : '○'}
+                      </button>
+                      📄 {g.title}
+                      <span className="text-[10px] uppercase">
+                        {g.docs.length}-pg set
+                      </span>
+                      <button
+                        type="button"
+                        className="hover:text-red-700"
+                        onClick={() => removeDocSet(g)}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  );
+                })}
+                {groupDocsBySets(docs).singles.map((d) => (
                   <span
                     key={d.id}
                     className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs ${
