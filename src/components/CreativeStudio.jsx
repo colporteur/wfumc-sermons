@@ -163,6 +163,11 @@ export default function CreativeStudio({
   const [error, setError] = useState(null);
   const [notice, setNotice] = useState(null);
 
+  // Selected brainstorm sparks (checkboxes on brainstorm items).
+  // [{ key: 'msgIdx:itemIdx', text }] — cleared when the thread
+  // changes since keys are positional within the active thread.
+  const [selectedSparks, setSelectedSparks] = useState([]);
+
   const epigraph = useMemo(() => randomEpigraph(), []);
   const scrollRef = useRef(null);
 
@@ -231,6 +236,11 @@ export default function CreativeStudio({
       cancelled = true;
     };
   }, [open, sermon?.id]);
+
+  // Spark selection is positional within a thread — reset on switch.
+  useEffect(() => {
+    setSelectedSparks([]);
+  }, [activeId]);
 
   // Autoscroll to latest message.
   useEffect(() => {
@@ -670,6 +680,60 @@ export default function CreativeStudio({
       setError(e.message);
     } finally {
       setSending(false);
+    }
+  }
+
+  function toggleSpark(key, text) {
+    setSelectedSparks((cur) =>
+      cur.some((s) => s.key === key)
+        ? cur.filter((s) => s.key !== key)
+        : [...cur, { key, text }]
+    );
+  }
+
+  function sparksBlock() {
+    return selectedSparks.map((s) => `- ${s.text}`).join('\n');
+  }
+
+  // Send the selected sparks to Draft in THIS thread (full thread
+  // context rides along, as always).
+  function draftFromSelected() {
+    if (!selectedSparks.length) return;
+    const ask =
+      'Write draft copy that develops these selected sparks (weave them together where they want to combine):\n' +
+      sparksBlock();
+    setSelectedSparks([]);
+    send('draft', { presetAsk: ask });
+  }
+
+  // Carry the selected sparks into a fresh thread: new session, same
+  // mode, composer pre-filled — the pastor chooses Brainstorm or Draft
+  // from there. (Threads don't share history; this is the bridge.)
+  async function newThreadFromSelected() {
+    if (!selectedSparks.length) return;
+    const block = sparksBlock();
+    try {
+      const row = await createCreativeSession({
+        sermonId: sermon.id,
+        ownerUserId: user.id,
+        mode,
+        title: `From ${selectedSparks.length} spark${
+          selectedSparks.length === 1 ? '' : 's'
+        } — ${new Date().toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+        })}`,
+      });
+      setSessions((cur) => [row, ...cur]);
+      setActiveId(row.id);
+      setInstruction(
+        'Working from these sparks carried over from another thread:\n' +
+          block +
+          '\n\n'
+      );
+      setNotice('New thread started — sparks are in the composer; add direction and Brainstorm or Draft.');
+    } catch (e) {
+      setError(e.message);
     }
   }
 
@@ -1295,18 +1359,39 @@ export default function CreativeStudio({
                     // Brainstorms render item-by-item so each line can be
                     // filed to a Running List with one click.
                     <ol className="text-sm space-y-1.5 list-decimal pl-5">
-                      {splitBrainstormItems(m.content).map((item, j) => (
-                        <li key={j} className="group/item">
-                          <span className="whitespace-pre-wrap">{item}</span>{' '}
-                          <button
-                            className="opacity-0 group-hover/item:opacity-100 text-[10px] text-indigo-700 underline align-baseline"
-                            title={`File this line to ${listLabel(fileTargetKey)} (change the target list in the Running Lists panel)`}
-                            onClick={() => fileToList(item, fileTargetKey)}
-                          >
-                            + {listLabel(fileTargetKey)}
-                          </button>
-                        </li>
-                      ))}
+                      {splitBrainstormItems(m.content).map((item, j) => {
+                        const sparkKey = `${i}:${j}`;
+                        const checked = selectedSparks.some(
+                          (s) => s.key === sparkKey
+                        );
+                        return (
+                          <li key={j} className="group/item">
+                            <label className="inline-flex items-start gap-1.5 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                className="mt-1"
+                                checked={checked}
+                                onChange={() => toggleSpark(sparkKey, item)}
+                                title="Select this spark — selected sparks can go to Draft or a new thread together"
+                              />
+                              <span
+                                className={`whitespace-pre-wrap ${
+                                  checked ? 'bg-amber-100/70 rounded px-0.5' : ''
+                                }`}
+                              >
+                                {item}
+                              </span>
+                            </label>{' '}
+                            <button
+                              className="opacity-0 group-hover/item:opacity-100 text-[10px] text-indigo-700 underline align-baseline"
+                              title={`File this line to ${listLabel(fileTargetKey)} (change the target list in the Running Lists panel)`}
+                              onClick={() => fileToList(item, fileTargetKey)}
+                            >
+                              + {listLabel(fileTargetKey)}
+                            </button>
+                          </li>
+                        );
+                      })}
                     </ol>
                   ) : (
                     <div className="whitespace-pre-wrap text-sm">{m.content}</div>
@@ -1348,6 +1433,38 @@ export default function CreativeStudio({
                 </p>
               )}
             </div>
+
+            {/* Selected-sparks action bar */}
+            {selectedSparks.length > 0 && (
+              <div className="border-t bg-amber-50 px-4 py-2 flex flex-wrap items-center gap-2">
+                <span className="text-sm text-amber-900">
+                  {selectedSparks.length} spark
+                  {selectedSparks.length === 1 ? '' : 's'} selected
+                </span>
+                <button
+                  className="btn-primary text-xs"
+                  onClick={draftFromSelected}
+                  disabled={sending}
+                  title="Write draft copy developing exactly these sparks, in this thread (its history rides along)."
+                >
+                  📄 Draft from selected
+                </button>
+                <button
+                  className="btn-secondary text-xs"
+                  onClick={newThreadFromSelected}
+                  disabled={sending}
+                  title="Start a fresh thread carrying only these sparks — the composer is pre-filled; add direction, then Brainstorm or Draft."
+                >
+                  + New thread from these
+                </button>
+                <button
+                  className="text-xs text-gray-500 underline"
+                  onClick={() => setSelectedSparks([])}
+                >
+                  Clear
+                </button>
+              </div>
+            )}
 
             {/* Notices */}
             {(error || notice) && (
