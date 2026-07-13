@@ -167,9 +167,31 @@ export async function uploadBackgroundDoc({ sermonId, ownerUserId, file, comment
     kind = 'image';
     // Downsize/re-encode images at upload so turn-time is fast and the
     // private bucket doesn't accumulate 12 MB phone photos.
-    const prepared = await prepareImageForUpload(file);
-    uploadBlob = prepared.blob;
-    mimeType = prepared.mediaType;
+    try {
+      const prepared = await prepareImageForUpload(file);
+      uploadBlob = prepared.blob;
+      mimeType = prepared.mediaType;
+    } catch (e) {
+      // Decode failed. Phone galleries sometimes hand over images the
+      // mobile browser can't re-encode (odd JPEG variants, memory
+      // pressure mid-batch). If the container is a browser-standard
+      // type, upload the ORIGINAL bytes instead — desktop turn-time
+      // prep gets another shot at decoding, and Claude vision accepts
+      // plain JPEG/PNG fine. Genuinely unsupported formats (HEIC)
+      // still fail with the helpful message.
+      const standardType =
+        /^image\/(jpeg|png)$/.test(file.type) || /\.(jpe?g|png)$/.test(lower);
+      if (!standardType) throw e;
+      if ((file.size ?? 0) > 20 * 1024 * 1024) {
+        throw new Error(
+          `"${name}" couldn't be re-encoded and is too large (${Math.round(
+            file.size / 1024 / 1024
+          )} MB) to upload raw. Try a smaller export.`
+        );
+      }
+      uploadBlob = file;
+      mimeType = file.type || 'image/jpeg';
+    }
   }
 
   const docId = crypto.randomUUID();

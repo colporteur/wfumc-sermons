@@ -24,7 +24,9 @@ export default function QuickAddSource() {
   const [newSetTitle, setNewSetTitle] = useState('');
 
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState(''); // "Uploading 7/24…"
   const [done, setDone] = useState([]); // titles uploaded this visit
+  const [failed, setFailed] = useState([]); // { name, reason }
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -84,21 +86,27 @@ export default function QuickAddSource() {
     if (!files.length || !sermonId) return;
     setUploading(true);
     setError(null);
-    try {
-      for (const file of files) {
+    // One bad file must never sink the batch — 24 pages selected means
+    // 24 attempts, with failures reported by name at the end.
+    for (let i = 0; i < files.length; i++) {
+      setProgress(`Uploading ${i + 1}/${files.length}…`);
+      try {
         const row = await uploadBackgroundDoc({
           sermonId,
           ownerUserId: user.id,
-          file,
+          file: files[i],
           commentarySetId: setId || null,
         });
         setDone((cur) => [...cur, row.title]);
+      } catch (e) {
+        setFailed((cur) => [
+          ...cur,
+          { name: files[i].name || `file ${i + 1}`, reason: e.message },
+        ]);
       }
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setUploading(false);
     }
+    setProgress('');
+    setUploading(false);
   }
 
   const sermonLabel = (s) =>
@@ -182,7 +190,7 @@ export default function QuickAddSource() {
       <div className="space-y-2">
         {/* Camera capture — phones open the camera directly. */}
         <label className="btn-primary w-full py-4 text-base cursor-pointer text-center block">
-          {uploading ? 'Uploading…' : 'Take photo(s)'}
+          {uploading ? progress || 'Uploading…' : 'Take photo(s)'}
           <input
             type="file"
             accept="image/*"
@@ -196,7 +204,7 @@ export default function QuickAddSource() {
         {/* Photo picker — no `capture` attribute, so phones open the
             gallery/camera-roll with multi-select instead of the camera. */}
         <label className="btn-primary w-full py-4 text-base cursor-pointer text-center block">
-          Camera roll (select several)
+          {uploading ? progress || 'Uploading…' : 'Camera roll (select several)'}
           <input
             type="file"
             accept="image/*"
@@ -231,6 +239,24 @@ export default function QuickAddSource() {
           </ul>
           <p className="text-xs text-gray-500 mt-2">
             Keep snapping — pages land in upload order.
+          </p>
+        </div>
+      )}
+
+      {failed.length > 0 && (
+        <div className="card border-red-200">
+          <p className="text-sm font-medium text-red-700">
+            Couldn't upload {failed.length} file{failed.length === 1 ? '' : 's'}:
+          </p>
+          <ul className="mt-1 text-xs text-gray-700 space-y-0.5">
+            {failed.map((f, i) => (
+              <li key={i}>
+                • {f.name} — {f.reason}
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-gray-500 mt-2">
+            Everything else went through — re-select just these to retry.
           </p>
         </div>
       )}
