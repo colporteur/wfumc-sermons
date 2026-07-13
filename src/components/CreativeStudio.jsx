@@ -120,6 +120,10 @@ export default function CreativeStudio({
   const [resResults, setResResults] = useState([]);
   const [resSearching, setResSearching] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
+  // Which selected resource is open in the preview card (id or null).
+  // Lets the pastor read exactly what each scripture-matched resource
+  // says before deciding which ones stay on for the turn.
+  const [previewId, setPreviewId] = useState(null);
 
   // Background documents (Phase 2). Rows carry a per-session _on toggle
   // (default on) and an in-memory _visionCache the context builder
@@ -310,6 +314,7 @@ export default function CreativeStudio({
 
   function removeResource(id) {
     setResources((cur) => cur.filter((r) => r.id !== id));
+    setPreviewId((cur) => (cur === id ? null : cur));
   }
 
   async function handleUploadFiles(fileList) {
@@ -956,7 +961,17 @@ export default function CreativeStudio({
                           <button onClick={() => toggleResource(r.id)}>
                             {r._on ? '●' : '○'}
                           </button>
-                          {r.title || '(untitled)'}
+                          <button
+                            className={`hover:underline ${
+                              previewId === r.id ? 'font-semibold' : ''
+                            }`}
+                            title="Click to read this resource's full text below"
+                            onClick={() =>
+                              setPreviewId((cur) => (cur === r.id ? null : r.id))
+                            }
+                          >
+                            {r.title || '(untitled)'}
+                          </button>
                           <button
                             className="hover:text-red-700"
                             onClick={() => removeResource(r.id)}
@@ -967,6 +982,52 @@ export default function CreativeStudio({
                       ))}
                     </div>
                   )}
+
+                  {/* Resource preview — read before you decide */}
+                  {previewId &&
+                    (() => {
+                      const r = resources.find((x) => x.id === previewId);
+                      if (!r) return null;
+                      return (
+                        <div className="border rounded-md p-2 space-y-1 bg-emerald-50/40">
+                          <div className="flex flex-wrap items-baseline gap-2 text-xs text-gray-600">
+                            <span className="text-sm font-medium text-gray-800">
+                              {r.title || '(untitled)'}
+                            </span>
+                            {r.resource_type && <span>{r.resource_type}</span>}
+                            {r.tone && <span>tone: {r.tone}</span>}
+                            {r.scripture_refs && <span>{r.scripture_refs}</span>}
+                            {Array.isArray(r.themes) && r.themes.length > 0 && (
+                              <span>themes: {r.themes.join(', ')}</span>
+                            )}
+                            {r.source && <span>— {r.source}</span>}
+                          </div>
+                          <div className="text-sm whitespace-pre-wrap max-h-48 overflow-y-auto font-serif">
+                            {(r.content || '').trim() || '(no text content)'}
+                          </div>
+                          <div className="flex gap-2 pt-1">
+                            <button
+                              className="btn-secondary text-xs"
+                              onClick={() => toggleResource(r.id)}
+                            >
+                              {r._on ? 'Switch off for next turn' : 'Switch on'}
+                            </button>
+                            <button
+                              className="btn-secondary text-xs"
+                              onClick={() => removeResource(r.id)}
+                            >
+                              Remove from mix
+                            </button>
+                            <button
+                              className="btn-secondary text-xs"
+                              onClick={() => setPreviewId(null)}
+                            >
+                              Close
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                   {/* Background documents (Phase 2) */}
                   <div className="flex flex-wrap items-center gap-2">
