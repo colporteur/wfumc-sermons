@@ -193,6 +193,19 @@ export default function QuickAddSource() {
             onChange={(e) => handleFiles(e.target.files)}
           />
         </label>
+        {/* Photo picker — no `capture` attribute, so phones open the
+            gallery/camera-roll with multi-select instead of the camera. */}
+        <label className="btn-primary w-full py-4 text-base cursor-pointer text-center block">
+          Camera roll (select several)
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            disabled={uploading || !sermonId}
+            onChange={(e) => handleFiles(e.target.files)}
+          />
+        </label>
         <label className="btn-secondary w-full py-4 text-base cursor-pointer text-center block">
           📄 Choose files (.pdf / .jpg / .png / .txt)
           <input
