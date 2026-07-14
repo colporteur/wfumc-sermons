@@ -57,7 +57,7 @@ async function getPdfjs() {
  * Scale targets ~1600px on the longer side — enough for Claude to read
  * commentary type without ballooning the payload.
  */
-async function renderPdfPagesToJpegs(blob, maxPages = MAX_VISION_PAGES_PER_DOC) {
+export async function renderPdfPagesToJpegs(blob, maxPages = MAX_VISION_PAGES_PER_DOC) {
   const pdfjs = await getPdfjs();
   const doc = await pdfjs.getDocument({ data: await blob.arrayBuffer() })
     .promise;

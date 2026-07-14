@@ -36,6 +36,10 @@ import {
   buildPendingBlockInstruction,
 } from '../lib/sermonStashedBlocks';
 import { splitManuscriptParagraphs } from '../lib/paragraphs';
+import {
+  processAttachmentFile,
+  buildAttachmentPromptParts,
+} from '../lib/chatAttachments';
 
 // /sermons/:id/workspace — the Sermon Workspace.
 //
@@ -162,6 +166,12 @@ export default function SermonWorkspace() {
   // Composer state
   const [draftInstruction, setDraftInstruction] = useState('');
   const [sending, setSending] = useState(false);
+  // Per-turn chat attachments (PDF/JPG/PNG/TXT/MD), processed at
+  // attach time (see lib/chatAttachments.js). Cleared after send —
+  // ephemeral by design; the revised manuscript is what persists.
+  const [chatAttachments, setChatAttachments] = useState([]);
+  const [attaching, setAttaching] = useState(false);
+  const attachInputRef = useRef(null);
 
   // Manual save state
   const [saving, setSaving] = useState(false);
@@ -377,14 +387,18 @@ export default function SermonWorkspace() {
     // Optimistically append the user's instruction to the chat thread.
     // Stamp the resources attached on this turn so the user can see them
     // in the trail later.
+    // Attachments for THIS turn — consumed and cleared.
+    const attachmentsForTurn = chatAttachments;
     const userTurn = {
       role: 'user',
       content: instruction,
       ts: Date.now(),
       resourceTitles: resourcesForTurn.map((r) => r.title || '(untitled)'),
+      attachmentNames: attachmentsForTurn.map((a) => a.name),
     };
     setMessages((prev) => [...prev, userTurn]);
     setDraftInstruction('');
+    setChatAttachments([]);
 
     try {
       // 1) Persist any pending hand edits BEFORE we ask Claude — that
@@ -432,6 +446,10 @@ export default function SermonWorkspace() {
           .filter((m) => m.kind !== 'note')
           .map((m) => ({ role: m.role, content: m.content })),
         instruction,
+        attachments:
+          attachmentsForTurn.length > 0
+            ? buildAttachmentPromptParts(attachmentsForTurn)
+            : null,
         model: manuscriptModelId,
       });
 
@@ -680,6 +698,24 @@ export default function SermonWorkspace() {
     } finally {
       setLocking(false);
     }
+  };
+
+  const handleAttachFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
+    setAttaching(true);
+    setError(null);
+    // Per-file: one undecodable image shouldn't sink the rest.
+    for (const file of files) {
+      try {
+        const att = await processAttachmentFile(file);
+        setChatAttachments((cur) => [...cur, att]);
+      } catch (e) {
+        setError(e.message);
+      }
+    }
+    setAttaching(false);
+    if (attachInputRef.current) attachInputRef.current.value = '';
   };
 
   const handleClearChat = () => {
@@ -990,6 +1026,32 @@ export default function SermonWorkspace() {
                 Use “Unlock to revise” at the top of the page to continue.
               </p>
             )}
+            {chatAttachments.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {chatAttachments.map((a, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded-full bg-sky-50 border border-sky-200 px-2 py-0.5 text-xs text-sky-900"
+                    title={
+                      a.kind === 'image'
+                        ? `${a.images.length} image${a.images.length === 1 ? '' : 's'} — sent with your next instruction, then cleared.`
+                        : 'Text content — sent with your next instruction, then cleared.'
+                    }
+                  >
+                    📄 {a.name}
+                    <button
+                      type="button"
+                      className="hover:text-red-700"
+                      onClick={() =>
+                        setChatAttachments((cur) => cur.filter((_, j) => j !== i))
+                      }
+                    >
+                      ✕
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
             <textarea
               value={draftInstruction}
               onChange={(e) => setDraftInstruction(e.target.value)}
@@ -1006,8 +1068,25 @@ export default function SermonWorkspace() {
               disabled={sending || isLocked}
             />
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-500">
-                ⌘/Ctrl+Enter to send
+              <span className="flex items-center gap-2">
+                <input
+                  ref={attachInputRef}
+                  type="file"
+                  accept=".pdf,.jpg,.jpeg,.png,.txt,.md,application/pdf,image/jpeg,image/png,text/plain,text/markdown"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => handleAttachFiles(e.target.files)}
+                />
+                <button
+                  type="button"
+                  className="text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+                  onClick={() => attachInputRef.current?.click()}
+                  disabled={attaching || sending || isLocked}
+                  title="Attach a PDF, image, or text file to your next instruction — e.g., an article to integrate into the manuscript. Sent with that one turn, then cleared."
+                >
+                  {attaching ? 'Reading…' : '+ Attach'}
+                </button>
+                <span className="text-gray-500">⌘/Ctrl+Enter to send</span>
               </span>
               <button
                 type="button"
@@ -1320,6 +1399,12 @@ function ChatBubble({ message, onViewDiff, onRevert }) {
           Resources sent: {message.resourceTitles.join('; ')}
         </div>
       )}
+      {Array.isArray(message.attachmentNames) &&
+        message.attachmentNames.length > 0 && (
+          <div className="mt-1 text-[10px] text-gray-500">
+            Attached: {message.attachmentNames.join('; ')}
+          </div>
+        )}
     </div>
   );
 }

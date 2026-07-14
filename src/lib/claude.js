@@ -1217,6 +1217,11 @@ export async function reviseSermonManuscript({
   resourcesContext = '',
   history = [],
   instruction,
+  // Per-turn attachments from the revision-chat composer (see
+  // lib/chatAttachments.js): { textBlock, imageBlocks }. Ephemeral —
+  // they ride on THIS instruction turn only; the revised manuscript
+  // is what persists.
+  attachments = null,
   // Optional override of the claude-proxy default model. The Workspace
   // exposes a picker that lets the pastor swap between Sonnet 4.6
   // (default) and Opus for the manuscript work specifically. Other
@@ -1286,6 +1291,28 @@ export async function reviseSermonManuscript({
   //   2) Synthetic first assistant turn: acknowledges receipt
   //   3) Prior chat history (real turns from earlier this session)
   //   4) The new instruction as the final user turn
+  // The final user turn: instruction, plus any attached materials.
+  // Text attachments join the instruction text; images make the turn
+  // a multimodal content array (same block shapes the proxy already
+  // handles for the Creative Studio's background documents).
+  const attachmentText = attachments?.textBlock || '';
+  const attachmentImages = attachments?.imageBlocks || [];
+  const finalText =
+    instruction.trim() +
+    (attachmentText ? '\n\n' + attachmentText : '') +
+    (attachmentImages.length
+      ? '\n\n(The attached image(s) follow — read them as part of the attached materials.)'
+      : '');
+  const finalTurn = attachmentImages.length
+    ? {
+        role: 'user',
+        content: [
+          { type: 'text', text: finalText },
+          ...attachmentImages,
+        ],
+      }
+    : { role: 'user', content: finalText };
+
   const messages = [
     { role: 'user', content: anchor },
     {
@@ -1294,7 +1321,7 @@ export async function reviseSermonManuscript({
         "Got it. I have the current manuscript and the sermon context. Tell me what to change.",
     },
     ...history.map((m) => ({ role: m.role, content: m.content })),
-    { role: 'user', content: instruction.trim() },
+    finalTurn,
   ];
 
   // Manuscripts can be long; allow up to 64k output tokens. Claude sonnet
