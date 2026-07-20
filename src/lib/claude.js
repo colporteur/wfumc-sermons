@@ -2036,6 +2036,95 @@ export async function lookupScriptureNRSVUe(reference) {
 }
 
 /**
+ * Title/retitle ideation — the pastor's own prompt, structured for
+ * parsing. Uses the current manuscript + scripture to generate 7
+ * categories × 10 candidate titles. Used by the SermonDetail metadata
+ * editor's "Title ideas" button (components/TitleIdeationModal.jsx).
+ *
+ * Returns [{ category, titles: string[] }].
+ */
+export async function brainstormSermonTitles({ sermon, model = null }) {
+  const manuscript = (sermon?.manuscript_text || '').trim();
+  const scripture = (sermon?.scripture_reference || '').trim();
+  if (!manuscript && !scripture) {
+    throw new Error(
+      'Title ideation needs a manuscript or at least a scripture reference on this sermon.'
+    );
+  }
+  const capped =
+    manuscript.length > 20000
+      ? manuscript.slice(0, 20000) + '\n[… truncated …]'
+      : manuscript;
+
+  const contextParts = [];
+  if (scripture) contextParts.push(`Scripture: ${scripture}`);
+  if (sermon?.theme) contextParts.push(`Theme: ${sermon.theme}`);
+  if (sermon?.title) contextParts.push(`Current title: ${sermon.title}`);
+  if (capped) contextParts.push('== SERMON MANUSCRIPT ==\n\n' + capped);
+
+  const result = await callClaude(
+    {
+      system: [
+        'You are helping a United Methodist pastor title (or retitle) a',
+        'sermon. Titling is a spiritual art: a great title is a promise',
+        "about the sermon's tension, not its summary. Ground every",
+        'suggestion in the actual manuscript and scripture provided.',
+        '',
+        'OUTPUT FORMAT — strict, for machine parsing:',
+        'For each requested category output a heading line starting with',
+        '"## " followed by the category name, then exactly 10 numbered',
+        'lines ("1. Title here"). For the with-subtitles category, use',
+        'the form "Title: Subtitle" on one line. No preamble, no',
+        'commentary, no markdown besides the ## headings and numbers.',
+      ].join('\n'),
+      messages: [
+        {
+          role: 'user',
+          content:
+            'Come up with a list of 10 conventional sermon titles, 10 clickbaity sermon titles, ' +
+            '10 clever and concise sermon titles, 10 extra creative sermon titles (with subtitles), ' +
+            '10 extra creative sermon titles (without subtitles), 10 sermon titles based on ' +
+            'pop-culture or the western literary canon, and 10 sermon titles based on common ' +
+            'sayings, phrases, aphorisms, or axioms based on the following sermon:\n\n' +
+            contextParts.join('\n\n'),
+        },
+      ],
+      max_tokens: 3500,
+      ...(model ? { model } : {}),
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(result).trim();
+  if (!text) throw new Error('Claude returned no titles. Try again.');
+
+  // Parse "## Category" + numbered lines into sections. Anything that
+  // doesn't parse cleanly lands in a catch-all section so no idea is
+  // silently lost.
+  const sections = [];
+  let current = null;
+  for (const line of text.split('\n')) {
+    const h = line.match(/^##\s+(.+)$/);
+    if (h) {
+      current = { category: h[1].trim(), titles: [] };
+      sections.push(current);
+      continue;
+    }
+    const t = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    if (t) {
+      if (!current) {
+        current = { category: 'Ideas', titles: [] };
+        sections.push(current);
+      }
+      current.titles.push(t[1].trim());
+    }
+  }
+  if (!sections.length || !sections.some((s) => s.titles.length)) {
+    throw new Error('Could not parse the title list — try again.');
+  }
+  return sections;
+}
+
+/**
  * Manuscript → sermon matcher used as the fall-through layer of the
  * batch importer. Given a manuscript's filename + first ~3000 chars of
  * text, plus a JSON list of unmatched sermons, ask Claude which

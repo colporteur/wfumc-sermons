@@ -10,6 +10,7 @@ import { useDraftStorage } from '../lib/draftStorage';
 import LoadingSpinner from '../components/LoadingSpinner.jsx';
 import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
+import TitleIdeationModal from '../components/TitleIdeationModal.jsx';
 import PreachingsCard from '../components/PreachingsCard.jsx';
 import ManuscriptWithSlides from '../components/ManuscriptWithSlides.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
@@ -43,6 +44,8 @@ export default function SermonDetail() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [showMerge, setShowMerge] = useState(false);
+  // "✨ Title ideas" modal (components/TitleIdeationModal.jsx).
+  const [titleIdeasOpen, setTitleIdeasOpen] = useState(false);
   // Persist the metadata edit draft to sessionStorage so accidental
   // navigation doesn't lose changes. Key includes user.id to avoid
   // cross-user contamination on shared machines.
@@ -371,7 +374,24 @@ export default function SermonDetail() {
             )}
 
             <div>
-              <label className="label">Title</label>
+              <div className="flex items-baseline justify-between">
+                <label className="label">Title</label>
+                <button
+                  type="button"
+                  className="text-xs text-umc-700 hover:text-umc-900 underline disabled:opacity-50"
+                  onClick={() => setTitleIdeasOpen(true)}
+                  disabled={
+                    !sermon?.manuscript_text && !draft.scripture_reference
+                  }
+                  title={
+                    !sermon?.manuscript_text && !draft.scripture_reference
+                      ? 'Needs a manuscript or scripture reference to ideate from.'
+                      : '70 title candidates in 7 registers (conventional → clickbaity → pop-culture…), from the manuscript + scripture. Pick one to replace the current title; the old one shifts to Previous titles.'
+                  }
+                >
+                  ✨ Title ideas
+                </button>
+              </div>
               <input
                 type="text"
                 className="input"
@@ -684,6 +704,28 @@ export default function SermonDetail() {
           onClose={() => setShowMerge(false)}
         />
       )}
+
+      <TitleIdeationModal
+        open={titleIdeasOpen}
+        onClose={() => setTitleIdeasOpen(false)}
+        sermon={sermon}
+        onPick={(newTitle) => {
+          // Replace the draft title; shuffle the old one into Previous
+          // titles so it stays searchable (the field auto-dedupes on
+          // save). Nothing persists until the metadata form is saved.
+          // NOTE: setDraft (useDraftStorage) takes a VALUE, not an
+          // updater fn — compute from the in-scope draft.
+          const oldTitle = (draft.title || '').trim();
+          const prev = (draft.previous_titles || '').trim();
+          const nextPrev =
+            oldTitle && oldTitle !== newTitle
+              ? prev
+                ? `${prev}, ${oldTitle}`
+                : oldTitle
+              : prev;
+          setDraft({ ...draft, title: newTitle, previous_titles: nextPrev });
+        }}
+      />
     </div>
   );
 }
