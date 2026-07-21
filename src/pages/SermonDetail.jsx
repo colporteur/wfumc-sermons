@@ -618,6 +618,19 @@ export default function SermonDetail() {
                 >
                   🖼️ Slide Deck
                 </Link>
+                <a
+                  href={`https://colporteur.vercel.app/for-sermon?title=${encodeURIComponent(
+                    sermon.title ?? ''
+                  )}&scripture=${encodeURIComponent(
+                    sermon.scripture_reference ?? ''
+                  )}&theme=${encodeURIComponent(sermon.theme ?? '')}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-secondary text-sm whitespace-nowrap"
+                  title="Search the Colporteur reading library for commentaries, tagged extracts, and related passages for this sermon's scripture and theme"
+                >
+                  📚 Library findings
+                </a>
                 <button
                   type="button"
                   onClick={startEdit}
