@@ -36,6 +36,7 @@ import {
   buildPendingBlockInstruction,
 } from '../lib/sermonStashedBlocks';
 import { splitManuscriptParagraphs } from '../lib/paragraphs';
+import { colporteurSermonUrl } from '../lib/colporteur';
 import {
   processAttachmentFile,
   buildAttachmentPromptParts,
@@ -878,6 +879,15 @@ export default function SermonWorkspace() {
           >
             ✨ Creative Studio
           </button>
+          <a
+            href={colporteurSermonUrl(sermon)}
+            target="_blank"
+            rel="noreferrer"
+            className="btn-secondary text-xs whitespace-nowrap"
+            title="Search the Colporteur reading library for commentaries, tagged extracts, and related passages for this sermon's scripture and theme."
+          >
+            📚 Library findings
+          </a>
           {isLocked ? (
             <>
               <span className="text-umc-700 font-medium">

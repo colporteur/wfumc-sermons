@@ -57,6 +57,7 @@ import {
   buildCongregationContext,
 } from '../lib/congregation';
 import { groupDocsBySets } from '../lib/commentarySets';
+import { colporteurSermonUrl } from '../lib/colporteur';
 
 // Creative Studio — full-screen brainstorming overlay for the Sermon
 // Workspace. Operationalizes the pastor's twelve sermon-tips documents
@@ -1017,6 +1018,15 @@ export default function CreativeStudio({
                         {suggesting ? 'Matching…' : 'Suggest by scripture'}
                       </button>
                     )}
+                    <a
+                      href={colporteurSermonUrl(sermon)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-secondary text-sm whitespace-nowrap"
+                      title="Search the Colporteur reading library for commentaries, tagged extracts, and related passages for this sermon."
+                    >
+                      📚 Library findings
+                    </a>
                   </div>
                   {resResults.length > 0 && (
                     <div className="flex flex-wrap gap-1">

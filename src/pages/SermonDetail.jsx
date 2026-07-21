@@ -15,6 +15,7 @@ import PreachingsCard from '../components/PreachingsCard.jsx';
 import ManuscriptWithSlides from '../components/ManuscriptWithSlides.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import { fetchSlideImages } from '../lib/sermonSlideImages';
+import { colporteurSermonUrl } from '../lib/colporteur';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
 function fmtDate(yyyymmdd) {
@@ -619,11 +620,7 @@ export default function SermonDetail() {
                   🖼️ Slide Deck
                 </Link>
                 <a
-                  href={`https://colporteur.vercel.app/for-sermon?title=${encodeURIComponent(
-                    sermon.title ?? ''
-                  )}&scripture=${encodeURIComponent(
-                    sermon.scripture_reference ?? ''
-                  )}&theme=${encodeURIComponent(sermon.theme ?? '')}`}
+                  href={colporteurSermonUrl(sermon)}
                   target="_blank"
                   rel="noreferrer"
                   className="btn-secondary text-sm whitespace-nowrap"
