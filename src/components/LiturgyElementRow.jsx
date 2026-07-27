@@ -1,7 +1,9 @@
 import { useState } from 'react';
 import { getElementLabel, supportsInsertSentence } from '../lib/worshipElements';
 import InsertScriptureSentencePanel from './InsertScriptureSentencePanel.jsx';
-import { pickCallToWorshipVerse } from '../lib/claude';
+import { pickCallToWorshipVerse, finishCongregationalPrayer } from '../lib/claude';
+import { loadVoiceGuideForPrompt } from '../lib/voiceGuide';
+import { useAuth } from '../contexts/AuthContext.jsx';
 
 // The standard closing lines Todd speaks after the call-to-worship
 // verse. The blank is filled in by hand each week with the prelude
@@ -44,6 +46,7 @@ export default function LiturgyElementRow({
   onBrainstormClaude,
   scriptureRefs = '',
 }) {
+  const { user } = useAuth();
   const [editing, setEditing] = useState(false);
   const [draftBody, setDraftBody] = useState(element.body || '');
   const [draftTitle, setDraftTitle] = useState(element.title || '');
@@ -117,6 +120,35 @@ export default function LiturgyElementRow({
       setCtwError(e.message || String(e));
     } finally {
       setBuildingCtw(false);
+    }
+  };
+
+  // Congregational Prayer: finish what the pastor started. His text is
+  // preserved verbatim and continued in his voice, always landing on a
+  // transition into the Lord's Prayer.
+  const [finishingPrayer, setFinishingPrayer] = useState(false);
+  const [prayerError, setPrayerError] = useState(null);
+  const handleFinishPrayer = async () => {
+    setFinishingPrayer(true);
+    setPrayerError(null);
+    try {
+      let voicePrompt = '';
+      try {
+        const v = await loadVoiceGuideForPrompt(user?.id);
+        voicePrompt = v?.systemPrompt || '';
+      } catch {
+        /* voice guide is a nicety, not a requirement */
+      }
+      const finished = await finishCongregationalPrayer({
+        partial: draftBody,
+        scriptureRefs,
+        voiceSystemPrompt: voicePrompt,
+      });
+      setDraftBody(finished);
+    } catch (e) {
+      setPrayerError(e.message || String(e));
+    } finally {
+      setFinishingPrayer(false);
     }
   };
 
@@ -271,6 +303,26 @@ export default function LiturgyElementRow({
               </button>
               {ctwError && (
                 <span className="text-xs text-red-700">{ctwError}</span>
+              )}
+            </div>
+          )}
+          {element.section_kind === 'congregational_prayer' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleFinishPrayer}
+                disabled={finishingPrayer || saving || !draftBody.trim()}
+                className="btn-secondary text-xs disabled:opacity-50"
+                title={
+                  !draftBody.trim()
+                    ? 'Start the prayer above — this finishes what you begin.'
+                    : "Keep your opening word-for-word, carry it through in your voice, and land on the transition into the Lord's Prayer."
+                }
+              >
+                {finishingPrayer ? 'Finishing…' : '✨ Finish this prayer'}
+              </button>
+              {prayerError && (
+                <span className="text-xs text-red-700">{prayerError}</span>
               )}
             </div>
           )}

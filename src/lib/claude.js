@@ -2051,6 +2051,81 @@ export async function lookupScriptureNRSVUe(reference) {
 }
 
 /**
+ * Finish a congregational/pastoral prayer the pastor has started but
+ * not completed. Preserves his opening verbatim, continues in his
+ * voice, and always lands on a transition into the Lord's Prayer.
+ * Used by the Congregational Prayer "Finish this prayer" button on
+ * components/LiturgyElementRow.jsx.
+ *
+ * @param {Object} input
+ * @param {string} input.partial       - what the pastor has written so far
+ * @param {string} [input.scriptureRefs]
+ * @param {string} [input.voiceSystemPrompt] - his voice guide, if loaded
+ * @returns {Promise<string>} the COMPLETE prayer (his text + the finish)
+ */
+export async function finishCongregationalPrayer({
+  partial,
+  scriptureRefs = '',
+  voiceSystemPrompt = '',
+}) {
+  const started = (partial || '').trim();
+  if (!started) {
+    throw new Error(
+      'Write the opening of the prayer first — this finishes what you start.'
+    );
+  }
+  const systemParts = [
+    [
+      'You finish congregational (pastoral) prayers for a United',
+      'Methodist pastor. He has begun a prayer; your job is to carry it',
+      'through to its end as if he wrote the whole thing.',
+      '',
+      'Rules:',
+      '  - REPRODUCE his existing text EXACTLY as given, word for word,',
+      '    at the start of your output. Do not rewrite, polish, or',
+      '    reorder it. Then continue from where he stopped — mid-sentence',
+      '    if that is where he left off.',
+      '  - Match his voice, cadence, and theological register. Plain,',
+      '    warm, unfussy prose a congregation can pray along with.',
+      '  - Carry forward whatever he has opened up. If he named a',
+      '    concern (the grieving, the sick, the world, gratitude), stay',
+      '    with it rather than starting new themes.',
+      '  - Include the ordinary petitions a pastoral prayer holds: the',
+      '    church, the suffering, the world, thanksgiving — but only as',
+      '    they fit what he began. Do not pad.',
+      '  - ALWAYS end with a brief transition into the Lord\'s Prayer,',
+      '    then the opening words only — e.g. "…and now, with the',
+      '    confidence of children, we pray the prayer Jesus taught us:',
+      '    Our Father…". NEVER write out the full Lord\'s Prayer.',
+      '  - Plain text only. No headers, no markdown, no commentary about',
+      '    what you did.',
+    ].join('\n'),
+  ];
+  if (voiceSystemPrompt && voiceSystemPrompt.trim()) {
+    systemParts.push(voiceSystemPrompt.trim());
+  }
+
+  const userParts = [];
+  if (scriptureRefs && scriptureRefs.trim()) {
+    userParts.push(`Scripture for the day: ${scriptureRefs.trim()}`);
+  }
+  userParts.push('The prayer as far as I have written it:\n\n' + started);
+  userParts.push('Finish it.');
+
+  const result = await callClaude(
+    {
+      system: systemParts.join('\n\n'),
+      messages: [{ role: 'user', content: userParts.join('\n\n') }],
+      max_tokens: 1500,
+    },
+    { timeoutMs: 90000 }
+  );
+  const text = extractText(result).trim();
+  if (!text) throw new Error('Claude returned nothing. Try again.');
+  return text;
+}
+
+/**
  * Pick the single best verse from a liturgy's scripture to serve as a
  * one-sentence Call to Worship. Returns just the verse text (no verse
  * numbers, no reference) so it can drop straight into the element
