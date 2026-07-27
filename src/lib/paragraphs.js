@@ -157,8 +157,12 @@ export function looksLikeScriptureReference(text) {
   // Optional leading 1/2/3 (1 John, 2 Kings), then a Book name (one or
   // two capitalized words), then chapter, optional :verse or :verse-verse,
   // optionally followed by extra refs separated by ; or ,.
+  //
+  // Verse numbers accept an optional a/b suffix — the standard
+  // half-verse designation ("Genesis 32:7a" = first half of v.7).
+  // Both ends of a range can carry one ("Psalm 40:1b-3a").
   const re =
-    /^([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+(\s*[-–—]\s*\d+)?)?(\s*[;,]\s*([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+(\s*[-–—]\s*\d+)?)?)*$/;
+    /^([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+[ab]?(\s*[-–—]\s*\d+[ab]?)?)?(\s*[;,]\s*([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+[ab]?(\s*[-–—]\s*\d+[ab]?)?)?)*$/;
   return re.test(s);
 }
 

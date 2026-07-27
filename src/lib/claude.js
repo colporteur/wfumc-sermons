@@ -2020,8 +2020,23 @@ export async function lookupScriptureNRSVUe(reference) {
   const ref = (reference || '').trim();
   if (!ref) throw new Error('No scripture reference provided.');
   const result = await callClaude({
-    system:
-      'You are helping prepare a church slide. When asked for a scripture passage, return ONLY the verse text — no verse numbers, no brackets, no introduction, no commentary, no copyright notice. Run the verses together as continuous prose. After all the verses, output a blank line, then the full scripture reference on its own line (e.g. "Acts 17:23"). Use plain text only — no markdown.',
+    system: [
+      'You are helping prepare a church slide. When asked for a scripture',
+      'passage, return ONLY the verse text — no verse numbers, no brackets,',
+      'no introduction, no commentary, no copyright notice. Run the verses',
+      'together as continuous prose. After all the verses, output a blank',
+      'line, then the full scripture reference on its own line (e.g.',
+      '"Acts 17:23"). Use plain text only — no markdown.',
+      '',
+      'HALF-VERSE DESIGNATIONS: a reference may carry an "a" or "b" suffix',
+      'on a verse number (e.g. "Genesis 32:7a", "Psalm 40:1b-3a"). "a"',
+      'means the first half of that verse; "b" means the second half.',
+      'Split at the natural clause boundary — the main punctuation break',
+      "or the seam between the verse's two parallel halves. If the verse has",
+      'no sensible split point, or you are at all unsure where it falls,',
+      'return the WHOLE verse instead of guessing. Keep the a/b designation',
+      'exactly as given in the reference line you print at the end.',
+    ].join('\n'),
     messages: [
       {
         role: 'user',
