@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext.jsx';
 import TypeaheadSearch from '../components/TypeaheadSearch.jsx';
 import { buildDefaultElements } from '../lib/worshipElements';
 
-// Create a brand-new liturgy from scratch. Seeds the 6 default
+// Create a brand-new liturgy from scratch. Seeds the default
 // worship elements (empty bodies) and lands the user on the detail
 // page ready to edit.
 //
@@ -65,7 +65,7 @@ export default function LiturgyNew() {
       if (liturgyErr) throw liturgyErr;
       const liturgyId = created.id;
 
-      // 2. Seed the 6 default elements.
+      // 2. Seed the default elements.
       const defaults = buildDefaultElements({
         liturgyId,
         ownerUserId: user.id,

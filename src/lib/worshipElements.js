@@ -73,14 +73,19 @@ export const ELEMENT_LABEL_ALIASES = {
   congregational_prayer: ['Pastoral Prayer'],
 };
 
-// Default 6 elements for every new liturgy, in Todd's stated order
-// (NOT liturgical-standard order): Call to Worship, then Prelude with
-// Announcements directly under it, then the Offering Statement between
-// Announcements and the Children's Moment. (Order revised July 2026 —
-// offering_statement previously sat right after call_to_worship.)
+// Default elements for every new liturgy, in Todd's stated order
+// (NOT liturgical-standard order): Call to Worship, Announcements,
+// Offering Statement, Children's Moment, Congregational Prayer.
+//
+// Revised July 2026:
+//   - offering_statement moved to sit between announcements and the
+//     children's moment (it used to follow call_to_worship)
+//   - prelude dropped as a default — the prelude is now named inside
+//     the Call to Worship text itself ("Karen's prelude today will
+//     be…", see components/LiturgyElementRow.jsx). It remains
+//     available to add by hand from the element picker.
 export const DEFAULT_ELEMENT_KEYS = [
   'call_to_worship',
-  'prelude',
   'announcements',
   'offering_statement',
   'childrens_moment',
@@ -104,9 +109,9 @@ export function getElementLabel(key) {
 }
 
 /**
- * Build the 6 default elements ready to insert into
+ * Build the default elements ready to insert into
  * sermon_liturgy_sections for a brand-new liturgy. Body is empty;
- * sort_order is 0..5 matching DEFAULT_ELEMENT_KEYS order.
+ * sort_order matches DEFAULT_ELEMENT_KEYS order.
  */
 export function buildDefaultElements({ liturgyId, ownerUserId }) {
   return DEFAULT_ELEMENT_KEYS.map((key, idx) => ({

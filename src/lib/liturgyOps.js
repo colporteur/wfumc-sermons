@@ -10,7 +10,7 @@ import {
 } from './worshipElements';
 
 /**
- * Create a new liturgy and seed it with the 6 default elements.
+ * Create a new liturgy and seed it with the default elements.
  * Returns the new liturgy id.
  *
  * Optional opts:
@@ -69,7 +69,7 @@ export async function createLiturgyWithDefaults({
 
 /**
  * "Send to new liturgy" — copies a single element into a fresh draft
- * liturgy that has the 6 defaults. If the source element's type matches
+ * liturgy that has the defaults. If the source element's type matches
  * a default slot (e.g. congregational_prayer → slot 4), the matching
  * default's empty body is OVERWRITTEN with the incoming element's body.
  * Otherwise, the element is APPENDED at the end.
