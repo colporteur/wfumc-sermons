@@ -2051,6 +2051,59 @@ export async function lookupScriptureNRSVUe(reference) {
 }
 
 /**
+ * Pick the single best verse from a liturgy's scripture to serve as a
+ * one-sentence Call to Worship. Returns just the verse text (no verse
+ * numbers, no reference) so it can drop straight into the element
+ * body. Used by the Call to Worship quick-build button on
+ * components/LiturgyElementRow.jsx.
+ *
+ * @param {string} scriptureRefs - e.g. "Romans 8:12-25" or
+ *   "Matthew 11:16-19; 25-30" (free-form, may be composite)
+ * @returns {Promise<{ sentence: string, reference: string }>}
+ */
+export async function pickCallToWorshipVerse(scriptureRefs) {
+  const refs = (scriptureRefs || '').trim();
+  if (!refs) throw new Error('This liturgy has no scripture reference set.');
+  const result = await callClaude({
+    system: [
+      'You help a United Methodist pastor build the Call to Worship for',
+      'Sunday worship. Given the scripture reference(s) for the day,',
+      'choose the SINGLE best verse (or half-verse) to be spoken as a',
+      'one-sentence call to worship.',
+      '',
+      'Choose for: direct address or invitation, praise or summons to',
+      'attend to God, something a congregation can hear cold at the top',
+      'of a service. Avoid verses that need context to make sense,',
+      'mid-argument clauses, or anything with an unclear antecedent',
+      '("he," "it," "this" with no referent). Trim to one sentence — a',
+      'clean half-verse is better than a rambling whole one.',
+      '',
+      'Use the NRSVUe. Output EXACTLY two lines and nothing else:',
+      'Line 1: the verse text alone — no verse numbers, no quotation',
+      '  marks, no reference, no commentary.',
+      'Line 2: the reference for that verse (e.g. "Romans 8:15b").',
+    ].join('\n'),
+    messages: [
+      {
+        role: 'user',
+        content: `Scripture for the day: ${refs}\n\nChoose the call to worship verse.`,
+      },
+    ],
+    max_tokens: 500,
+  });
+  const text = extractText(result).trim();
+  if (!text) throw new Error('Claude returned nothing. Try again.');
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  return {
+    sentence: lines[0] || text,
+    reference: lines[1] || '',
+  };
+}
+
+/**
  * Title/retitle ideation — the pastor's own prompt, structured for
  * parsing. Uses the current manuscript + scripture to generate 7
  * categories × 10 candidate titles. Used by the SermonDetail metadata

@@ -1,6 +1,13 @@
 import { useState } from 'react';
 import { getElementLabel, supportsInsertSentence } from '../lib/worshipElements';
 import InsertScriptureSentencePanel from './InsertScriptureSentencePanel.jsx';
+import { pickCallToWorshipVerse } from '../lib/claude';
+
+// The standard closing lines Todd speaks after the call-to-worship
+// verse. The blank is filled in by hand each week with the prelude
+// title. Edit here if the pianist changes.
+const PRELUDE_LINE =
+  "Karen's prelude today will be _______________. Let us worship God";
 
 // One element in the liturgy detail page. Renders the element label +
 // body, with click-to-edit, reorder arrows, delete, "Send to bulletin"
@@ -85,6 +92,32 @@ export default function LiturgyElementRow({
       const cur = (prev || '').trim();
       return cur ? cur + ' ' + sentence : sentence;
     });
+  };
+
+  // Call to Worship quick-build: ask Claude for the single best verse
+  // from the day's scripture, then lay it out with the standard
+  // prelude line underneath. Replaces the draft body (with a confirm
+  // if there's already text there).
+  const [buildingCtw, setBuildingCtw] = useState(false);
+  const [ctwError, setCtwError] = useState(null);
+  const handleBuildCallToWorship = async () => {
+    if (
+      draftBody.trim() &&
+      !window.confirm('Replace the current Call to Worship text?')
+    ) {
+      return;
+    }
+    setBuildingCtw(true);
+    setCtwError(null);
+    try {
+      const { sentence, reference } = await pickCallToWorshipVerse(scriptureRefs);
+      const verseLine = reference ? `${sentence} (${reference})` : sentence;
+      setDraftBody(verseLine + '\n\n' + PRELUDE_LINE);
+    } catch (e) {
+      setCtwError(e.message || String(e));
+    } finally {
+      setBuildingCtw(false);
+    }
   };
 
   const handleSendToNew = async () => {
@@ -225,6 +258,22 @@ export default function LiturgyElementRow({
               placeholder={`Write the ${label.toLowerCase()} text…`}
             />
           </div>
+          {element.section_kind === 'call_to_worship' && scriptureRefs && (
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleBuildCallToWorship}
+                disabled={buildingCtw || saving}
+                className="btn-secondary text-xs disabled:opacity-50"
+                title={`Pick the best single verse from ${scriptureRefs} for a one-sentence call to worship, and lay it out with the prelude line underneath.`}
+              >
+                {buildingCtw ? 'Choosing a verse…' : '✨ Build from scripture'}
+              </button>
+              {ctwError && (
+                <span className="text-xs text-red-700">{ctwError}</span>
+              )}
+            </div>
+          )}
           {supportsInsertSentence(element.section_kind) && scriptureRefs && (
             <InsertScriptureSentencePanel
               scriptureRefs={scriptureRefs}
