@@ -2051,6 +2051,138 @@ export async function lookupScriptureNRSVUe(reference) {
 }
 
 /**
+ * Brainstorm replacement illustrations. Given an illustration currently
+ * used in the manuscript, propose 5–8 alternatives that fill the SAME
+ * role in the sermon (same setup, same landing point). Used by
+ * components/ReplaceIllustrationModal.jsx.
+ *
+ * Returns [{ label, body, roleFit }].
+ */
+export async function brainstormReplacementIllustrations({
+  sermon,
+  manuscript,
+  illustration,
+  model = null,
+}) {
+  const ill = (illustration || '').trim();
+  if (!ill) throw new Error('Paste (or select) the illustration to replace first.');
+  const ms = (manuscript || '').trim();
+  const capped = ms.length > 20000 ? ms.slice(0, 20000) + '\n[… truncated …]' : ms;
+
+  const result = await callClaude(
+    {
+      system: [
+        'You help a United Methodist pastor swap out a sermon',
+        'illustration. First, silently work out the ROLE the given',
+        'illustration plays in this manuscript: where it sits in the',
+        "argument, what it sets up, what it lands, what register it",
+        'plays in (humor, pathos, surprise, proof). Then propose 5-8',
+        'REPLACEMENT illustrations that fill that same role.',
+        '',
+        'Requirements for each candidate:',
+        '  - Concrete and tellable: specific people/places/objects, not',
+        '    abstractions. 3-6 sentences sketching how the pastor would',
+        '    actually tell it.',
+        '  - Varied across candidates: different domains (history,',
+        '    ordinary life, nature, sports, literature, church life…),',
+        '    different registers where the role allows.',
+        '  - True stories must be true; if something is invented or',
+        '    composite, frame it as such in the sketch.',
+        '  - Must land the same point the old illustration lands.',
+        '',
+        'OUTPUT FORMAT — strict, for machine parsing. For each candidate:',
+        '## <Short handle (2-5 words)>',
+        '<the 3-6 sentence sketch>',
+        'ROLE FIT: <one sentence on how it fills the same slot>',
+        'No preamble, no closing commentary.',
+      ].join('\n'),
+      messages: [
+        {
+          role: 'user',
+          content:
+            (sermon?.scripture_reference
+              ? `Scripture: ${sermon.scripture_reference}\n\n`
+              : '') +
+            'ILLUSTRATION TO REPLACE:\n"""\n' +
+            ill +
+            '\n"""\n\nFULL MANUSCRIPT (for role context):\n\n' +
+            capped,
+        },
+      ],
+      max_tokens: 3000,
+      ...(model ? { model } : {}),
+    },
+    { timeoutMs: 120000 }
+  );
+  const text = extractText(result).trim();
+  if (!text) throw new Error('Claude returned no candidates. Try again.');
+
+  const out = [];
+  let cur = null;
+  for (const line of text.split('\n')) {
+    const h = line.match(/^##\s+(.+)$/);
+    if (h) {
+      cur = { label: h[1].trim(), bodyLines: [], roleFit: '' };
+      out.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    const rf = line.match(/^ROLE FIT:\s*(.+)$/i);
+    if (rf) {
+      cur.roleFit = rf[1].trim();
+    } else if (line.trim()) {
+      cur.bodyLines.push(line.trim());
+    }
+  }
+  const candidates = out
+    .map((c) => ({
+      label: c.label,
+      body: c.bodyLines.join(' '),
+      roleFit: c.roleFit,
+    }))
+    .filter((c) => c.body);
+  if (!candidates.length) {
+    throw new Error('Could not parse the candidates — try again.');
+  }
+  return candidates;
+}
+
+/**
+ * Build the revision-chat instruction that swaps an illustration
+ * throughout the manuscript — the main chunk AND any later callbacks.
+ * Routed through the normal revision pipeline so the pastor gets the
+ * pre-turn snapshot, diff view, and Revert for free.
+ */
+export function buildReplaceIllustrationInstruction({ oldIllustration, candidate }) {
+  return [
+    'Replace an illustration throughout the manuscript.',
+    '',
+    'OLD ILLUSTRATION (currently in the manuscript):',
+    '"""',
+    oldIllustration.trim(),
+    '"""',
+    '',
+    `NEW ILLUSTRATION to take its place — "${candidate.label}":`,
+    '"""',
+    candidate.body.trim(),
+    '"""',
+    '',
+    'Do all of the following:',
+    '1. Replace the main passage containing the old illustration with a',
+    '   fully written telling of the new illustration, in my voice,',
+    '   fitted to the surrounding argument — same setup, same landing',
+    '   point, comparable length.',
+    '2. Find every LATER CALLBACK to the old illustration anywhere in',
+    '   the manuscript — brief references, echoes, reprised phrases or',
+    '   punchlines — and rewrite each one to reference the new',
+    '   illustration instead, preserving the callback\'s rhetorical',
+    '   purpose. If a callback has no sensible equivalent under the new',
+    '   illustration, remove it and smooth the seam.',
+    '3. Change nothing else in the manuscript.',
+  ].join('\n');
+}
+
+/**
  * Finish a congregational/pastoral prayer the pastor has started but
  * not completed. Preserves his opening verbatim, continues in his
  * voice, and always lands on a transition into the Lord's Prayer.

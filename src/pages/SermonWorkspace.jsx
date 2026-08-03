@@ -20,6 +20,7 @@ import WorkspaceExploreModal from '../components/WorkspaceExploreModal.jsx';
 import WorkspaceExtractResources from '../components/WorkspaceExtractResources.jsx';
 import CreativeStudio from '../components/CreativeStudio.jsx';
 import EulogyPanel from '../components/EulogyPanel.jsx';
+import ReplaceIllustrationModal from '../components/ReplaceIllustrationModal.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import ManuscriptModelPicker from '../components/ManuscriptModelPicker.jsx';
 import {
@@ -162,6 +163,9 @@ export default function SermonWorkspace() {
   // Overlay: ✨ Creative Studio — brainstorm/draft panel grounded in the
   // pastor's sermon-tips method (see lib/creativeTechniques.js).
   const [studioOpen, setStudioOpen] = useState(false);
+  // Modal: ✨ Replace illustration (suggest same-role stand-ins, then
+  // swap main chunk + callbacks via a normal revision turn).
+  const [replaceIllusOpen, setReplaceIllusOpen] = useState(false);
   const exploreOpen = exploreInitialResources.length > 0;
 
   // Composer state
@@ -879,6 +883,21 @@ export default function SermonWorkspace() {
           >
             ✨ Creative Studio
           </button>
+          <button
+            type="button"
+            onClick={() => setReplaceIllusOpen(true)}
+            disabled={!manuscript || !manuscript.trim() || isLocked}
+            className="btn-secondary text-xs whitespace-nowrap disabled:opacity-50"
+            title={
+              isLocked
+                ? 'Unlock the manuscript to replace illustrations.'
+                : !manuscript || !manuscript.trim()
+                ? 'Needs a manuscript.'
+                : 'Suggest same-role replacement illustrations for one currently in the sermon, then swap it — main passage and later callbacks. Tip: highlight the illustration first to pre-fill it.'
+            }
+          >
+            ✨ Replace illustration
+          </button>
           <a
             href={colporteurSermonUrl(sermon)}
             target="_blank"
@@ -1249,6 +1268,21 @@ export default function SermonWorkspace() {
           setManuscript((cur) =>
             cur && cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + body + '\n' : body + '\n'
           );
+        }}
+      />
+
+      <ReplaceIllustrationModal
+        open={replaceIllusOpen}
+        onClose={() => setReplaceIllusOpen(false)}
+        sermon={sermon}
+        manuscript={manuscript}
+        model={manuscriptModelId}
+        initialIllustration={currentSelection.selectedText || ''}
+        onReplace={(instruction) => {
+          setReplaceIllusOpen(false);
+          // Runs through the normal revision pipeline — snapshot, diff,
+          // and Revert all apply.
+          handleSendInstruction(instruction);
         }}
       />
 
