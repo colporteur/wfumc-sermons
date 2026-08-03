@@ -1307,9 +1307,12 @@ export default function SermonWorkspace() {
           const existing = findManuscriptSlideMarkers(manuscript || '');
           const nextNum =
             existing.reduce((max, m) => Math.max(max, m.number || 0), 0) + 1;
-          const before = (manuscript || '').slice(0, snap.end);
-          const after = (manuscript || '').slice(snap.end);
-          setManuscript(`${before} <SLIDE #${nextNum} – ${reference}>${after}`);
+          // Marker goes BEFORE the highlighted text — the slide should
+          // be up before the phrase is spoken. Surrounding whitespace
+          // (incl. paragraph breaks) is left untouched.
+          const before = (manuscript || '').slice(0, snap.start);
+          const after = (manuscript || '').slice(snap.start);
+          setManuscript(`${before}<SLIDE #${nextNum} – ${reference}> ${after}`);
           setCurrentSelection({ start: 0, end: 0, selectedText: '' });
           setFindScriptureOpen(false);
         }}
