@@ -36,7 +36,11 @@ import {
   consumePendingBlockForSermon,
   buildPendingBlockInstruction,
 } from '../lib/sermonStashedBlocks';
-import { splitManuscriptParagraphs } from '../lib/paragraphs';
+import {
+  splitManuscriptParagraphs,
+  findManuscriptSlideMarkers,
+} from '../lib/paragraphs';
+import FindScriptureModal from '../components/FindScriptureModal.jsx';
 import { colporteurSermonUrl } from '../lib/colporteur';
 import {
   processAttachmentFile,
@@ -203,6 +207,10 @@ export default function SermonWorkspace() {
   });
   const [reviseSelOpen, setReviseSelOpen] = useState(false);
   const [reviseSelSnapshot, setReviseSelSnapshot] = useState(null);
+  // "✨ Find Scripture" — highlight a phrase, get the passages behind
+  // it, insert a slide marker or the verse text after the highlight.
+  const [findScriptureOpen, setFindScriptureOpen] = useState(false);
+  const [findScriptureSnapshot, setFindScriptureSnapshot] = useState(null);
   // Per-pastor choice of Claude model for manuscript revisions.
   // Persists in localStorage; only affects reviseSermonManuscript and
   // reviseManuscriptSnippet (not Brainstorm / slide suggester / etc.).
@@ -1160,6 +1168,21 @@ export default function SermonWorkspace() {
                   {countWords(currentSelection.selectedText) === 1 ? '' : 's'})
                 </button>
               )}
+              {!isLocked && currentSelection.selectedText.trim().length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Freeze the selection so edits while the modal is
+                    // open don't shift the insertion point.
+                    setFindScriptureSnapshot({ ...currentSelection });
+                    setFindScriptureOpen(true);
+                  }}
+                  className="text-xs px-2 py-0.5 rounded border border-umc-300 text-umc-800 hover:bg-umc-50"
+                  title="Find the scripture behind the highlighted phrase (NRSVue), then insert a slide marker or the verse text after it."
+                >
+                  ✨ Find Scripture
+                </button>
+              )}
               <ParagraphNumberToggle
                 checked={showParagraphNumbers}
                 onChange={setShowParagraphNumbers}
@@ -1268,6 +1291,36 @@ export default function SermonWorkspace() {
           setManuscript((cur) =>
             cur && cur.trim() ? cur.replace(/\s+$/, '') + '\n\n' + body + '\n' : body + '\n'
           );
+        }}
+      />
+
+      <FindScriptureModal
+        open={findScriptureOpen && !!findScriptureSnapshot}
+        onClose={() => setFindScriptureOpen(false)}
+        phrase={findScriptureSnapshot?.selectedText || ''}
+        sermonScripture={sermon.scripture_reference || ''}
+        model={manuscriptModelId}
+        onInsertMarker={(reference) => {
+          const snap = findScriptureSnapshot;
+          if (!snap) return;
+          // Next free slide number = highest existing marker + 1.
+          const existing = findManuscriptSlideMarkers(manuscript || '');
+          const nextNum =
+            existing.reduce((max, m) => Math.max(max, m.number || 0), 0) + 1;
+          const before = (manuscript || '').slice(0, snap.end);
+          const after = (manuscript || '').slice(snap.end);
+          setManuscript(`${before} <SLIDE #${nextNum} – ${reference}>${after}`);
+          setCurrentSelection({ start: 0, end: 0, selectedText: '' });
+          setFindScriptureOpen(false);
+        }}
+        onInsertVerse={({ reference, text }) => {
+          const snap = findScriptureSnapshot;
+          if (!snap) return;
+          const before = (manuscript || '').slice(0, snap.end);
+          const after = (manuscript || '').slice(snap.end);
+          setManuscript(`${before}\n\n${text} (${reference})\n\n${after.replace(/^\s+/, '')}`);
+          setCurrentSelection({ start: 0, end: 0, selectedText: '' });
+          setFindScriptureOpen(false);
         }}
       />
 

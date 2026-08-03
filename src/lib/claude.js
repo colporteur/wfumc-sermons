@@ -2051,6 +2051,87 @@ export async function lookupScriptureNRSVUe(reference) {
 }
 
 /**
+ * Find scripture references for a highlighted phrase — "the spears
+ * beaten into pruning hooks" → Isaiah 2:4, Micah 4:3, … Used by
+ * components/FindScriptureModal.jsx in the Workspace.
+ *
+ * Returns [{ reference, text, rationale }] (text is NRSVue).
+ */
+export async function findScriptureForPhrase({ phrase, sermonScripture = '', model = null }) {
+  const p = (phrase || '').trim();
+  if (!p) throw new Error('Highlight a phrase or sentence first.');
+  const result = await callClaude(
+    {
+      system: [
+        'You help a United Methodist pastor find the scripture behind a',
+        'phrase in his sermon manuscript. Given the highlighted phrase,',
+        'return the 2-5 most relevant passages.',
+        '',
+        'Priorities, in order:',
+        '  1. If the phrase quotes, paraphrases, or alludes to specific',
+        '     scripture, identify THOSE passages first — all of them if',
+        '     the image appears in multiple places (e.g. swords-to-',
+        '     plowshares lives in both Isaiah 2:4 and Micah 4:3, and',
+        '     inverted in Joel 3:10).',
+        '  2. Then, if room remains, passages that resonate thematically.',
+        '',
+        'For each passage give the NRSVue text, kept short — the verse',
+        'or two that actually carries the connection, using a/b',
+        'half-verse designations where that trims better.',
+        '',
+        'OUTPUT FORMAT — strict, for machine parsing. For each passage:',
+        '## <Reference>   (e.g. "## Isaiah 2:4b")',
+        '<the NRSVue text — verse text only, no verse numbers>',
+        'WHY: <one short line on the connection>',
+        'No preamble, no closing commentary. Order by relevance.',
+      ].join('\n'),
+      messages: [
+        {
+          role: 'user',
+          content:
+            (sermonScripture
+              ? `The sermon's main text is ${sermonScripture}.\n\n`
+              : '') +
+            `Highlighted phrase from the manuscript:\n"""\n${p}\n"""\n\nFind the scripture.`,
+        },
+      ],
+      max_tokens: 1500,
+      ...(model ? { model } : {}),
+    },
+    { timeoutMs: 90000 }
+  );
+  const raw = extractText(result).trim();
+  if (!raw) throw new Error('Claude returned nothing. Try again.');
+
+  const out = [];
+  let cur = null;
+  for (const line of raw.split('\n')) {
+    const h = line.match(/^##\s+(.+)$/);
+    if (h) {
+      cur = { reference: h[1].trim(), textLines: [], rationale: '' };
+      out.push(cur);
+      continue;
+    }
+    if (!cur) continue;
+    const w = line.match(/^WHY:\s*(.+)$/i);
+    if (w) {
+      cur.rationale = w[1].trim();
+    } else if (line.trim()) {
+      cur.textLines.push(line.trim());
+    }
+  }
+  const candidates = out
+    .map((c) => ({
+      reference: c.reference,
+      text: c.textLines.join(' '),
+      rationale: c.rationale,
+    }))
+    .filter((c) => c.reference && c.text);
+  if (!candidates.length) throw new Error('Could not parse the passages — try again.');
+  return candidates;
+}
+
+/**
  * Brainstorm replacement illustrations. Given an illustration currently
  * used in the manuscript, propose 5–8 alternatives that fill the SAME
  * role in the sermon (same setup, same landing point). Used by
