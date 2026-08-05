@@ -2057,7 +2057,15 @@ export async function lookupScriptureNRSVUe(reference) {
  *
  * Returns [{ reference, text, rationale }] (text is NRSVue).
  */
-export async function findScriptureForPhrase({ phrase, sermonScripture = '', model = null }) {
+export async function findScriptureForPhrase({
+  phrase,
+  sermonScripture = '',
+  // Optional pastor-supplied steer — e.g. "I mean Jesus' family's
+  // flight to Egypt, not the Exodus". Weighted heavily: it names the
+  // intent the bare phrase can't carry.
+  context = '',
+  model = null,
+}) {
   const p = (phrase || '').trim();
   if (!p) throw new Error('Highlight a phrase or sentence first.');
   const result = await callClaude(
@@ -2074,6 +2082,12 @@ export async function findScriptureForPhrase({ phrase, sermonScripture = '', mod
         '     plowshares lives in both Isaiah 2:4 and Micah 4:3, and',
         '     inverted in Joel 3:10).',
         '  2. Then, if room remains, passages that resonate thematically.',
+        '',
+        'If the pastor supplies added context about what he MEANS by the',
+        'phrase, treat it as decisive — it overrides the surface reading.',
+        'A phrase like "the journey to Egypt and back" could point to the',
+        'Exodus OR to the holy family\'s flight in Matthew 2; his context',
+        'settles which.',
         '',
         'For each passage give the NRSVue text, kept short — the verse',
         'or two that actually carries the connection, using a/b',
@@ -2092,7 +2106,11 @@ export async function findScriptureForPhrase({ phrase, sermonScripture = '', mod
             (sermonScripture
               ? `The sermon's main text is ${sermonScripture}.\n\n`
               : '') +
-            `Highlighted phrase from the manuscript:\n"""\n${p}\n"""\n\nFind the scripture.`,
+            `Highlighted phrase from the manuscript:\n"""\n${p}\n"""\n\n` +
+            (context && context.trim()
+              ? `My added context (decisive): ${context.trim()}\n\n`
+              : '') +
+            'Find the scripture.',
         },
       ],
       max_tokens: 1500,

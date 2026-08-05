@@ -31,26 +31,24 @@ export default function FindScriptureModal({
   const [loading, setLoading] = useState(false);
   const [candidates, setCandidates] = useState(null);
   const [error, setError] = useState(null);
+  // Optional steer for when the bare phrase is ambiguous ("the journey
+  // to Egypt and back" → Exodus or Matthew 2?). Re-search applies it.
+  const [context, setContext] = useState('');
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+  const runSearch = (ctx) => {
     setCandidates(null);
     setError(null);
     setLoading(true);
-    findScriptureForPhrase({ phrase, sermonScripture, model })
-      .then((c) => {
-        if (!cancelled) setCandidates(c);
-      })
-      .catch((e) => {
-        if (!cancelled) setError(e.message);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    findScriptureForPhrase({ phrase, sermonScripture, context: ctx, model })
+      .then(setCandidates)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    setContext('');
+    runSearch('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -72,6 +70,28 @@ export default function FindScriptureModal({
         </div>
 
         <div className="px-4 py-3 space-y-2 max-h-[70vh] overflow-y-auto">
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              runSearch(context);
+            }}
+          >
+            <input
+              className="input text-xs py-1"
+              placeholder={'Optional context — e.g., "I mean Jesus’ family’s flight to Egypt, not the Exodus"'}
+              value={context}
+              onChange={(e) => setContext(e.target.value)}
+              disabled={loading}
+            />
+            <button
+              className="btn-secondary text-xs shrink-0 disabled:opacity-50"
+              disabled={loading || !context.trim()}
+              title="Re-run the search with your context — it overrides the surface reading of the phrase."
+            >
+              Search with context
+            </button>
+          </form>
           {loading && (
             <p className="text-sm text-gray-500 animate-pulse">
               Tracing the phrase into the text…
