@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { getElementLabel, supportsInsertSentence } from '../lib/worshipElements';
 import InsertScriptureSentencePanel from './InsertScriptureSentencePanel.jsx';
 import { pickCallToWorshipVerse, finishCongregationalPrayer } from '../lib/claude';
+import { listRecentLiturgies, fetchAnnouncementsBody } from '../lib/liturgyOps';
 import { loadVoiceGuideForPrompt } from '../lib/voiceGuide';
 import { useAuth } from '../contexts/AuthContext.jsx';
 
@@ -149,6 +150,51 @@ export default function LiturgyElementRow({
       setPrayerError(e.message || String(e));
     } finally {
       setFinishingPrayer(false);
+    }
+  };
+
+  // Announcements: inherit from a previous liturgy as a starting
+  // point. Recent liturgies load when the pastor opens the picker;
+  // choosing one copies its Announcements body into the draft
+  // (confirm before replacing existing text).
+  const [inheritList, setInheritList] = useState(null); // null = not loaded
+  const [inheritLoading, setInheritLoading] = useState(false);
+  const [inheritError, setInheritError] = useState(null);
+  const handleLoadInheritList = async () => {
+    if (inheritList || inheritLoading) return;
+    setInheritLoading(true);
+    setInheritError(null);
+    try {
+      const rows = await listRecentLiturgies({ excludeId: element.liturgy_id });
+      setInheritList(rows);
+      if (!rows.length) setInheritError('No other liturgies found.');
+    } catch (e) {
+      setInheritError(e.message || String(e));
+    } finally {
+      setInheritLoading(false);
+    }
+  };
+  const handleInheritFrom = async (liturgyId) => {
+    if (!liturgyId) return;
+    if (
+      draftBody.trim() &&
+      !window.confirm('Replace the current announcements text with the copied one?')
+    ) {
+      return;
+    }
+    setInheritLoading(true);
+    setInheritError(null);
+    try {
+      const body = await fetchAnnouncementsBody(liturgyId);
+      if (!body) {
+        setInheritError('That liturgy has no announcements text.');
+      } else {
+        setDraftBody(body);
+      }
+    } catch (e) {
+      setInheritError(e.message || String(e));
+    } finally {
+      setInheritLoading(false);
     }
   };
 
@@ -303,6 +349,41 @@ export default function LiturgyElementRow({
               </button>
               {ctwError && (
                 <span className="text-xs text-red-700">{ctwError}</span>
+              )}
+            </div>
+          )}
+          {element.section_kind === 'announcements' && (
+            <div className="flex flex-wrap items-center gap-2">
+              {inheritList === null ? (
+                <button
+                  type="button"
+                  onClick={handleLoadInheritList}
+                  disabled={inheritLoading || saving}
+                  className="btn-secondary text-xs disabled:opacity-50"
+                  title="Copy the announcements from a previous liturgy as this week's starting point, then edit."
+                >
+                  {inheritLoading ? 'Loading…' : '📋 Inherit from previous liturgy'}
+                </button>
+              ) : (
+                <select
+                  className="input text-xs py-1 w-auto max-w-xs"
+                  defaultValue=""
+                  disabled={inheritLoading || saving}
+                  onChange={(e) => handleInheritFrom(e.target.value)}
+                  title="Pick the liturgy to copy announcements from."
+                >
+                  <option value="" disabled>
+                    {inheritLoading ? 'Copying…' : 'Copy announcements from…'}
+                  </option>
+                  {inheritList.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {(l.used_at ? `${l.used_at} — ` : '') + (l.title || '(untitled)')}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {inheritError && (
+                <span className="text-xs text-red-700">{inheritError}</span>
               )}
             </div>
           )}

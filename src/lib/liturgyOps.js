@@ -3,6 +3,41 @@
 // liturgy" element action.
 
 import { supabase, withTimeout } from './supabase';
+
+/**
+ * Recent liturgies for the Announcements "inherit from…" picker —
+ * newest use-date first, excluding the liturgy being edited.
+ */
+export async function listRecentLiturgies({ excludeId = null, limit = 20 } = {}) {
+  let q = supabase
+    .from('sermon_liturgies')
+    .select('id, title, used_at')
+    .order('used_at', { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (excludeId) q = q.neq('id', excludeId);
+  const { data, error } = await withTimeout(q);
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * Fetch the Announcements body from another liturgy (for inheriting
+ * last week's announcements as this week's starting point). Returns
+ * null when that liturgy has no announcements element or it's empty.
+ */
+export async function fetchAnnouncementsBody(liturgyId) {
+  const { data, error } = await withTimeout(
+    supabase
+      .from('sermon_liturgy_sections')
+      .select('body')
+      .eq('liturgy_id', liturgyId)
+      .eq('section_kind', 'announcements')
+      .limit(1)
+  );
+  if (error) throw error;
+  const body = data?.[0]?.body?.trim();
+  return body || null;
+}
 import {
   buildDefaultElements,
   matchingDefaultSlot,
