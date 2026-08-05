@@ -155,14 +155,21 @@ export function looksLikeScriptureReference(text) {
   if (!text) return false;
   const s = text.trim();
   // Optional leading 1/2/3 (1 John, 2 Kings), then a Book name (one or
-  // two capitalized words), then chapter, optional :verse or :verse-verse,
-  // optionally followed by extra refs separated by ; or ,.
+  // two capitalized words), then chapter, optional :verse or :verse-verse.
+  // After a complete reference, ; or , may introduce EITHER another full
+  // reference OR a bare verse / verse-range continuation that inherits
+  // the book+chapter ("Genesis 37:6-7; 9" = vv.6-7 and 9 of Gen 37;
+  // "Matthew 11:16-19; 25-30" likewise).
   //
   // Verse numbers accept an optional a/b suffix — the standard
   // half-verse designation ("Genesis 32:7a" = first half of v.7).
-  // Both ends of a range can carry one ("Psalm 40:1b-3a").
-  const re =
-    /^([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+[ab]?(\s*[-–—]\s*\d+[ab]?)?)?(\s*[;,]\s*([1-3]\s+)?[A-Z][a-zA-Z]+(\s+(of\s+)?[A-Z][a-zA-Z]+)?\s+\d+(:\d+[ab]?(\s*[-–—]\s*\d+[ab]?)?)?)*$/;
+  // Composed from parts for readability; behavior is what matters.
+  const BOOK = '([1-3]\\s+)?[A-Z][a-zA-Z]+(\\s+(of\\s+)?[A-Z][a-zA-Z]+)?';
+  const VERSE = '\\d+[ab]?(\\s*[-–—]\\s*\\d+[ab]?)?';
+  const FULLREF = `${BOOK}\\s+\\d+(:${VERSE})?`;
+  const re = new RegExp(
+    `^${FULLREF}(\\s*[;,]\\s*(${FULLREF}|${VERSE}))*$`
+  );
   return re.test(s);
 }
 
