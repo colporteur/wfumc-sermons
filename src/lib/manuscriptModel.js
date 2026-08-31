@@ -25,10 +25,16 @@ export const MANUSCRIPT_MODEL_OPTIONS = [
     short: 'Sonnet 4.6',
   },
   {
-    key: 'opus-4-8',
-    id: 'claude-opus-4-8',
-    label: 'Opus 4.8 (slower, costlier, more thoughtful)',
-    short: 'Opus 4.8',
+    key: 'sonnet-5',
+    id: 'claude-sonnet-5',
+    label: 'Sonnet 5 (near-Opus quality, mid price)',
+    short: 'Sonnet 5',
+  },
+  {
+    key: 'opus-5',
+    id: 'claude-opus-5',
+    label: 'Opus 5 (deep, deliberate)',
+    short: 'Opus 5',
   },
   {
     key: 'fable-5',

@@ -35,11 +35,11 @@ export const CREATIVE_MODEL_OPTIONS = [
     hint: 'Stronger than 4.6 at the same tier. Good everyday Studio choice.',
   },
   {
-    key: 'opus-4-8',
-    id: 'claude-opus-4-8',
-    label: 'Opus 4.8 (deep, deliberate)',
-    short: 'Opus 4.8',
-    hint: 'Heavier exegetical lifting and careful draft copy.',
+    key: 'opus-5',
+    id: 'claude-opus-5',
+    label: 'Opus 5 (deep, deliberate)',
+    short: 'Opus 5',
+    hint: 'Heavier exegetical lifting and careful draft copy — current Opus generation.',
   },
   {
     key: 'fable-5',
