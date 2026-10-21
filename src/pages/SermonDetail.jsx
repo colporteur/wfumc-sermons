@@ -387,7 +387,7 @@ export default function SermonDetail() {
                   title={
                     !sermon?.manuscript_text && !draft.scripture_reference
                       ? 'Needs a manuscript or scripture reference to ideate from.'
-                      : '70 title candidates in 7 registers (conventional → clickbaity → pop-culture…), from the manuscript + scripture. Pick one to replace the current title; the old one shifts to Previous titles.'
+                      : '40 title candidates in 8 registers (clever, subtitled, conventional, funny, turn of phrase, cultural, literary, clickbaity), from the manuscript + scripture. Pick one, edit it if you like, and it replaces the current title; the old one shifts to Previous titles.'
                   }
                 >
                   ✨ Title ideas
@@ -605,6 +605,24 @@ export default function SermonDetail() {
                 </div>
               </div>
               <div className="flex flex-col items-end gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  className="btn-secondary text-sm whitespace-nowrap disabled:opacity-50"
+                  onClick={() => {
+                    // Opens the details editor underneath so a picked
+                    // title lands in the Title field, ready to save.
+                    startEdit();
+                    setTitleIdeasOpen(true);
+                  }}
+                  disabled={!sermon.manuscript_text && !sermon.scripture_reference}
+                  title={
+                    !sermon.manuscript_text && !sermon.scripture_reference
+                      ? 'Needs a manuscript or scripture reference to ideate from.'
+                      : 'Brainstorm 40 titles in 8 registers from the manuscript + scripture, then pick and edit one.'
+                  }
+                >
+                  ✨ Title ideas
+                </button>
                 <Link
                   to={`/sermons/${sermon.id}/workspace`}
                   className="btn-primary text-sm whitespace-nowrap"
@@ -719,6 +737,7 @@ export default function SermonDetail() {
         open={titleIdeasOpen}
         onClose={() => setTitleIdeasOpen(false)}
         sermon={sermon}
+        currentTitle={draft?.title ?? sermon.title}
         onPick={(newTitle) => {
           // Replace the draft title; shuffle the old one into Previous
           // titles so it stays searchable (the field auto-dedupes on

@@ -2416,15 +2416,80 @@ export async function pickCallToWorshipVerse(scriptureRefs) {
 }
 
 /**
- * Title/retitle ideation — the pastor's own prompt, structured for
- * parsing. Uses the current manuscript + scripture to generate 7
- * categories × 10 candidate titles. Used by the SermonDetail metadata
- * editor's "Title ideas" button (components/TitleIdeationModal.jsx).
- *
- * Returns [{ category, titles: string[] }].
+ * The eight title registers the pastor asked for, in display order.
+ * `key` is what Claude must echo back on each "## " heading so the
+ * parser can slot titles into the right bucket regardless of wording.
  */
-export async function brainstormSermonTitles({ sermon, model = null }) {
-  const manuscript = (sermon?.manuscript_text || '').trim();
+export const TITLE_CATEGORIES = [
+  {
+    key: 'CLEVER',
+    label: 'Clever, concise',
+    guide: 'Short (1–4 words), sharp, a little surprising. Wit over explanation.',
+  },
+  {
+    key: 'SUBTITLED',
+    label: 'Conventional, with subtitle',
+    guide:
+      'A straightforward main title plus a clarifying subtitle, written on ONE line as "Title: Subtitle".',
+  },
+  {
+    key: 'CONVENTIONAL',
+    label: 'Conventional, no subtitle',
+    guide: 'The kind of solid, plain-spoken title a church sign or bulletin would carry. No colon.',
+  },
+  {
+    key: 'FUNNY',
+    label: 'Funny',
+    guide:
+      'Genuinely humorous — gentle, warm, small-town-congregation appropriate. Never mocking the text or the faith.',
+  },
+  {
+    key: 'TURN_OF_PHRASE',
+    label: 'Turn of phrase',
+    guide:
+      'Twist a common saying, idiom, aphorism, or proverb so it lands on the sermon\'s point (e.g., wordplay, reversal, pun).',
+  },
+  {
+    key: 'CULTURAL',
+    label: 'Cultural touchstones',
+    guide:
+      'Echo a recognizable film, TV show, song, album, ad slogan, sports moment, or other pop-culture reference a mixed-age rural Alabama congregation would catch.',
+  },
+  {
+    key: 'CANON',
+    label: 'Western literary canon',
+    guide:
+      'Allude to a line, title, or character from the Western literary canon (Shakespeare, Dante, Milton, Dickens, Austen, Twain, Melville, Dostoevsky, Flannery O\'Connor, Lewis, Tolkien, the classics, etc.).',
+  },
+  {
+    key: 'CLICKBAIT',
+    label: 'Clickbaity',
+    guide:
+      'Headline-style hooks ("You Won\'t Believe…", "3 Things…", "What Nobody Tells You About…") — playful, still truthful to the sermon.',
+  },
+];
+
+const TITLES_PER_CATEGORY = 5;
+
+/**
+ * Title/retitle ideation. Sends the current manuscript + chosen
+ * scripture and gets back 8 registers × 5 candidate titles. Used by
+ * components/TitleIdeationModal.jsx (opened from SermonDetail).
+ *
+ * @param {Object} input
+ * @param {Object} input.sermon  - sermon row (manuscript_text,
+ *   scripture_reference, theme, title)
+ * @param {string} [input.manuscriptOverride] - unsaved working text,
+ *   if the caller has a newer manuscript than the saved row
+ * @param {string} [input.model]
+ * @returns {Promise<Array<{ key, category, guide, titles: string[] }>>}
+ */
+export async function brainstormSermonTitles({
+  sermon,
+  manuscriptOverride = null,
+  model = null,
+}) {
+  const manuscript = (manuscriptOverride ?? sermon?.manuscript_text ?? '').trim();
   const scripture = (sermon?.scripture_reference || '').trim();
   if (!manuscript && !scripture) {
     throw new Error(
@@ -2432,44 +2497,52 @@ export async function brainstormSermonTitles({ sermon, model = null }) {
     );
   }
   const capped =
-    manuscript.length > 20000
-      ? manuscript.slice(0, 20000) + '\n[… truncated …]'
+    manuscript.length > 40000
+      ? manuscript.slice(0, 40000) + '\n[… truncated …]'
       : manuscript;
 
   const contextParts = [];
-  if (scripture) contextParts.push(`Scripture: ${scripture}`);
+  contextParts.push(`Scripture text: ${scripture || '(none chosen yet)'}`);
   if (sermon?.theme) contextParts.push(`Theme: ${sermon.theme}`);
-  if (sermon?.title) contextParts.push(`Current title: ${sermon.title}`);
-  if (capped) contextParts.push('== SERMON MANUSCRIPT ==\n\n' + capped);
+  if (sermon?.title) contextParts.push(`Current working title: ${sermon.title}`);
+  contextParts.push(
+    capped
+      ? '== CURRENT SERMON MANUSCRIPT ==\n\n' + capped
+      : '(No manuscript yet — work from the scripture alone.)'
+  );
+
+  const categoryList = TITLE_CATEGORIES.map(
+    (c, i) => `${i + 1}. ${c.key} — ${c.label}. ${c.guide}`
+  ).join('\n');
 
   const result = await callClaude(
     {
       system: [
-        'You are helping a United Methodist pastor title (or retitle) a',
-        'sermon. Titling is a spiritual art: a great title is a promise',
-        "about the sermon's tension, not its summary. Ground every",
-        'suggestion in the actual manuscript and scripture provided.',
+        'You are helping a United Methodist pastor in rural Alabama title',
+        '(or retitle) a sermon. A great title is a promise about the',
+        "sermon's tension, not a summary of it. Ground every suggestion",
+        "in the actual scripture and the manuscript's own images, stories,",
+        'and turns — not generic sermon clichés. Avoid repeating the same',
+        'idea across categories, and do not reuse the current title.',
+        '',
+        `Produce exactly ${TITLES_PER_CATEGORY} titles in EACH of these 8 categories:`,
+        categoryList,
         '',
         'OUTPUT FORMAT — strict, for machine parsing:',
-        'For each requested category output a heading line starting with',
-        '"## " followed by the category name, then exactly 10 numbered',
-        'lines ("1. Title here"). For the with-subtitles category, use',
-        'the form "Title: Subtitle" on one line. No preamble, no',
-        'commentary, no markdown besides the ## headings and numbers.',
+        'For each category, output a heading line "## KEY" using the exact',
+        `KEY above (e.g. "## CLEVER"), then exactly ${TITLES_PER_CATEGORY} numbered`,
+        'lines ("1. Title here"). Titles only — no quotation marks, no',
+        'explanations, no preamble, no closing remarks.',
       ].join('\n'),
       messages: [
         {
           role: 'user',
           content:
-            'Come up with a list of 10 conventional sermon titles, 10 clickbaity sermon titles, ' +
-            '10 clever and concise sermon titles, 10 extra creative sermon titles (with subtitles), ' +
-            '10 extra creative sermon titles (without subtitles), 10 sermon titles based on ' +
-            'pop-culture or the western literary canon, and 10 sermon titles based on common ' +
-            'sayings, phrases, aphorisms, or axioms based on the following sermon:\n\n' +
+            'Brainstorm sermon titles for the following sermon.\n\n' +
             contextParts.join('\n\n'),
         },
       ],
-      max_tokens: 3500,
+      max_tokens: 3000,
       ...(model ? { model } : {}),
     },
     { timeoutMs: 120000 }
@@ -2477,28 +2550,35 @@ export async function brainstormSermonTitles({ sermon, model = null }) {
   const text = extractText(result).trim();
   if (!text) throw new Error('Claude returned no titles. Try again.');
 
-  // Parse "## Category" + numbered lines into sections. Anything that
-  // doesn't parse cleanly lands in a catch-all section so no idea is
-  // silently lost.
-  const sections = [];
+  // Parse "## KEY" headings + numbered lines into the fixed buckets.
+  const byKey = Object.fromEntries(
+    TITLE_CATEGORIES.map((c) => [c.key, { ...c, category: c.label, titles: [] }])
+  );
+  const extras = { key: 'OTHER', category: 'Other ideas', guide: '', titles: [] };
   let current = null;
   for (const line of text.split('\n')) {
-    const h = line.match(/^##\s+(.+)$/);
+    const h = line.match(/^#{1,3}\s*(.+)$/);
     if (h) {
-      current = { category: h[1].trim(), titles: [] };
-      sections.push(current);
+      const raw = h[1].trim().toUpperCase().replace(/[^A-Z_ ]/g, '').replace(/\s+/g, '_');
+      current =
+        byKey[raw] ||
+        TITLE_CATEGORIES.map((c) => byKey[c.key]).find(
+          (b) => raw.startsWith(b.key) || b.label.toUpperCase().replace(/[^A-Z]+/g, '_').startsWith(raw)
+        ) ||
+        extras;
       continue;
     }
     const t = line.match(/^\s*\d+[.)]\s+(.+)$/);
     if (t) {
-      if (!current) {
-        current = { category: 'Ideas', titles: [] };
-        sections.push(current);
-      }
-      current.titles.push(t[1].trim());
+      const title = t[1].trim().replace(/^["“*]+|["”*]+$/g, '').trim();
+      if (title) (current || extras).titles.push(title);
     }
   }
-  if (!sections.length || !sections.some((s) => s.titles.length)) {
+  const sections = TITLE_CATEGORIES.map((c) => byKey[c.key]).filter(
+    (s) => s.titles.length
+  );
+  if (extras.titles.length) sections.push(extras);
+  if (!sections.length) {
     throw new Error('Could not parse the title list — try again.');
   }
   return sections;
