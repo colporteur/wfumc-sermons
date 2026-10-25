@@ -23,6 +23,7 @@ import {
   convertInchesToTwip,
   Packer,
 } from 'docx';
+import { makeWordSafe } from './wordSafeDocx';
 import {
   loadPrintPrefs,
   renderTokens,
@@ -395,7 +396,7 @@ export async function buildSermonDocx({
     ],
   });
 
-  return Packer.toBlob(doc);
+  return makeWordSafe(await Packer.toBlob(doc));
 }
 
 // Produce a sane-looking date string for the footer token. Doesn't try

@@ -25,6 +25,7 @@ import {
   Packer,
   convertInchesToTwip,
 } from 'docx';
+import { makeWordSafe } from './wordSafeDocx';
 import { getElementLabel } from './worshipElements';
 
 // Todd's font of choice for all Word output. Set BOTH as the document
@@ -199,7 +200,7 @@ export async function buildLiturgyDocx({ liturgy, sections }) {
       },
     ],
   });
-  return Packer.toBlob(doc);
+  return makeWordSafe(await Packer.toBlob(doc));
 }
 
 /**
