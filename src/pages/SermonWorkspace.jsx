@@ -41,6 +41,7 @@ import {
   findManuscriptSlideMarkers,
 } from '../lib/paragraphs';
 import FindScriptureModal from '../components/FindScriptureModal.jsx';
+import InsertScriptureModal from '../components/InsertScriptureModal.jsx';
 import { colporteurSermonUrl } from '../lib/colporteur';
 import {
   processAttachmentFile,
@@ -211,6 +212,13 @@ export default function SermonWorkspace() {
   // it, insert a slide marker or the verse text after the highlight.
   const [findScriptureOpen, setFindScriptureOpen] = useState(false);
   const [findScriptureSnapshot, setFindScriptureSnapshot] = useState(null);
+  // "📖 Insert Scripture" — type a reference, get the NRSVue text, drop
+  // it in at the cursor. hasCaretRef flips true once the editor has
+  // reported a cursor position, so an untouched manuscript appends at
+  // the end instead of inserting at character 0.
+  const [insertScriptureOpen, setInsertScriptureOpen] = useState(false);
+  const [insertScriptureSnapshot, setInsertScriptureSnapshot] = useState(null);
+  const hasCaretRef = useRef(false);
   // Per-pastor choice of Claude model for manuscript revisions.
   // Persists in localStorage; only affects reviseSermonManuscript and
   // reviseManuscriptSnippet (not Brainstorm / slide suggester / etc.).
@@ -1183,6 +1191,36 @@ export default function SermonWorkspace() {
                   ✨ Find Scripture
                 </button>
               )}
+              {!isLocked && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Freeze the insertion point: after the highlight if
+                    // there is one, else at the caret, else at the end.
+                    const text = manuscript || '';
+                    const pos = !hasCaretRef.current
+                      ? text.length
+                      : currentSelection.end > currentSelection.start
+                        ? currentSelection.end
+                        : currentSelection.start;
+                    setInsertScriptureSnapshot({
+                      pos: Math.min(pos, text.length),
+                      label: !hasCaretRef.current
+                        ? 'at the end of the manuscript'
+                        : currentSelection.selectedText.trim()
+                          ? 'after your highlighted text'
+                          : currentParagraphIdx >= 0
+                            ? `at your cursor (¶${currentParagraphIdx + 1})`
+                            : 'at your cursor',
+                    });
+                    setInsertScriptureOpen(true);
+                  }}
+                  className="text-xs px-2 py-0.5 rounded border border-umc-300 text-umc-800 hover:bg-umc-50"
+                  title="Insert the NRSVue text of a Scripture passage at your cursor."
+                >
+                  📖 Insert Scripture
+                </button>
+              )}
               <ParagraphNumberToggle
                 checked={showParagraphNumbers}
                 onChange={setShowParagraphNumbers}
@@ -1211,7 +1249,10 @@ export default function SermonWorkspace() {
             textareaStyle={{ minHeight: '60vh' }}
             showNumbers={showParagraphNumbers}
             onCurrentParagraphChange={setCurrentParagraphIdx}
-            onSelectionChange={setCurrentSelection}
+            onSelectionChange={(sel) => {
+              hasCaretRef.current = true;
+              setCurrentSelection(sel);
+            }}
           />
         </div>
       </div>
@@ -1324,6 +1365,37 @@ export default function SermonWorkspace() {
           setManuscript(`${before}\n\n${text} (${reference})\n\n${after.replace(/^\s+/, '')}`);
           setCurrentSelection({ start: 0, end: 0, selectedText: '' });
           setFindScriptureOpen(false);
+        }}
+      />
+
+      <InsertScriptureModal
+        open={insertScriptureOpen && !!insertScriptureSnapshot}
+        onClose={() => setInsertScriptureOpen(false)}
+        sermonScripture={sermon.scripture_reference || ''}
+        insertionLabel={insertScriptureSnapshot?.label || 'at your cursor'}
+        onInsert={({ reference, text, style }) => {
+          const snap = insertScriptureSnapshot;
+          if (!snap) return;
+          const cur = manuscript || '';
+          const pos = Math.min(snap.pos, cur.length);
+          const before = cur.slice(0, pos);
+          const after = cur.slice(pos);
+          let next;
+          if (style === 'inline') {
+            const quote = `“${text}” (${reference})`;
+            const lead = before && !/\s$/.test(before) ? ' ' : '';
+            const trail = after && !/^[\s.,;:!?)]/.test(after) ? ' ' : '';
+            next = `${before}${lead}${quote}${trail}${after}`;
+          } else {
+            const block = `${text} (${reference})`;
+            const b = before.replace(/\s+$/, '');
+            const a = after.replace(/^\s+/, '');
+            next = `${b}${b ? '\n\n' : ''}${block}${a ? `\n\n${a}` : '\n'}`;
+          }
+          setManuscript(next);
+          setCurrentSelection({ start: 0, end: 0, selectedText: '' });
+          hasCaretRef.current = false;
+          setInsertScriptureOpen(false);
         }}
       />
 
