@@ -289,11 +289,9 @@ export default function SermonLiturgiesCard({ sermon }) {
 
 function LiturgyEntry({ liturgy, sections, onSend }) {
   const [expanded, setExpanded] = useState(false);
-  const [showAnnouncements, setShowAnnouncements] = useState(false);
-  const visible = sections.filter(
-    (s) => showAnnouncements || !s.is_announcement
-  );
-  const announcementCount = sections.filter((s) => s.is_announcement).length;
+  // Announcements used to be hidden by default behind a checkbox; now
+  // they're treated as a regular first-class element and always shown.
+  const visible = sections;
   const date =
     liturgy.used_at ||
     (liturgy.original_created_at
@@ -365,17 +363,6 @@ function LiturgyEntry({ liturgy, sections, onSend }) {
                   </p>
                 </div>
               ))}
-              {announcementCount > 0 && (
-                <label className="text-[11px] text-gray-600 flex items-center gap-1.5">
-                  <input
-                    type="checkbox"
-                    checked={showAnnouncements}
-                    onChange={(e) => setShowAnnouncements(e.target.checked)}
-                  />
-                  Show {announcementCount} announcement section
-                  {announcementCount === 1 ? '' : 's'}
-                </label>
-              )}
             </>
           )}
         </div>

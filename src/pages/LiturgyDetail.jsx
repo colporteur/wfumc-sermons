@@ -32,7 +32,7 @@ export default function LiturgyDetail() {
   const [liturgy, setLiturgy] = useState(null);
   const [sections, setSections] = useState([]);
   const [links, setLinks] = useState([]); // sermon link rows + sermon info
-  const [showAnnouncements, setShowAnnouncements] = useState(false);
+  // (Announcements are now a regular element — no hide/show toggle.)
   const [editingMeta, setEditingMeta] = useState(false);
   const [draft, setDraft] = useState({ title: '', used_at: '', used_location: '', scripture_refs: '', notes: '' });
   const [busy, setBusy] = useState(false);
@@ -290,10 +290,9 @@ export default function LiturgyDetail() {
   };
 
   const handleMoveUp = async (element) => {
-    const visible = sections.filter((s) => showAnnouncements || !s.is_announcement);
-    const idx = visible.findIndex((s) => s.id === element.id);
+    const idx = sections.findIndex((s) => s.id === element.id);
     if (idx <= 0) return;
-    const prev = visible[idx - 1];
+    const prev = sections[idx - 1];
     setBusy(true);
     try {
       await swapElementOrder(element, prev);
@@ -306,10 +305,9 @@ export default function LiturgyDetail() {
   };
 
   const handleMoveDown = async (element) => {
-    const visible = sections.filter((s) => showAnnouncements || !s.is_announcement);
-    const idx = visible.findIndex((s) => s.id === element.id);
-    if (idx === -1 || idx >= visible.length - 1) return;
-    const next = visible[idx + 1];
+    const idx = sections.findIndex((s) => s.id === element.id);
+    if (idx === -1 || idx >= sections.length - 1) return;
+    const next = sections[idx + 1];
     setBusy(true);
     try {
       await swapElementOrder(element, next);
@@ -386,7 +384,7 @@ export default function LiturgyDetail() {
     setBusy(true);
     setError(null);
     try {
-      await exportLiturgyDocx({ liturgy, sections, showAnnouncements });
+      await exportLiturgyDocx({ liturgy, sections });
     } catch (e) {
       setError(e.message || String(e));
     } finally {
@@ -531,11 +529,9 @@ export default function LiturgyDetail() {
     await reload();
   };
 
-  const visibleSections = sections.filter(
-    (s) => showAnnouncements || !s.is_announcement
-  );
-  const hiddenAnnouncementCount = sections.filter((s) => s.is_announcement)
-    .length;
+  // Announcements used to be hidden behind a checkbox and excluded from
+  // the export; it's now a regular first-class element rendered with the
+  // rest. No filtering needed.
   const linkedSermonIds = new Set(links.map((l) => l.sermon_id));
 
   // ---- Render ----
@@ -809,17 +805,6 @@ export default function LiturgyDetail() {
             Elements ({sections.length})
           </h2>
           <div className="flex items-center gap-3 text-xs">
-            {hiddenAnnouncementCount > 0 && (
-              <label className="text-gray-700 flex items-center gap-1.5">
-                <input
-                  type="checkbox"
-                  checked={showAnnouncements}
-                  onChange={(e) => setShowAnnouncements(e.target.checked)}
-                />
-                Show {hiddenAnnouncementCount} announcement element
-                {hiddenAnnouncementCount === 1 ? '' : 's'}
-              </label>
-            )}
             {liturgy.raw_body && (
               <button
                 type="button"
@@ -836,20 +821,18 @@ export default function LiturgyDetail() {
             )}
           </div>
         </div>
-        {visibleSections.length === 0 ? (
+        {sections.length === 0 ? (
           <p className="text-sm text-gray-500 italic mt-2">
-            {sections.length === 0
-              ? 'No elements yet — add one below.'
-              : 'All elements are flagged as announcements (hidden by default).'}
+            No elements yet — add one below.
           </p>
         ) : (
           <ul className="mt-3 space-y-3">
-            {visibleSections.map((s, idx) => (
+            {sections.map((s, idx) => (
               <LiturgyElementRow
                 key={s.id}
                 element={s}
                 isFirst={idx === 0}
-                isLast={idx === visibleSections.length - 1}
+                isLast={idx === sections.length - 1}
                 busy={busy}
                 onSaveBody={handleSaveElementBody}
                 onDelete={handleDeleteElement}

@@ -134,7 +134,11 @@ export default function WorshipWeekCard({ sermon }) {
   const linkedWeeks = weeks.filter(
     (w) => w.plan?.selected_sermon_id === sermon?.id
   );
-  const openWeeks = weeks.filter((w) => !w.plan?.selected_sermon_id);
+  // Weeks marked "no sermon" in the Worship app (choir programs, etc.)
+  // are left out of the picker.
+  const openWeeks = weeks.filter(
+    (w) => !w.plan?.selected_sermon_id && !w.plan?.no_sermon
+  );
   const chosen = openWeeks.find((w) => w.service_date === chosenDate) || null;
   const chosenHasText = Boolean(
     chosen?.plan?.selected_text_option_id || chosen?.plan?.scripture_reference
