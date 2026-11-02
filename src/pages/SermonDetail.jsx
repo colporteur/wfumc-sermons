@@ -12,6 +12,7 @@ import SermonLiturgiesCard from '../components/SermonLiturgiesCard.jsx';
 import MergeSermonsModal from '../components/MergeSermonsModal.jsx';
 import TitleIdeationModal from '../components/TitleIdeationModal.jsx';
 import PreachingsCard from '../components/PreachingsCard.jsx';
+import WorshipWeekCard from '../components/WorshipWeekCard.jsx';
 import ManuscriptWithSlides from '../components/ManuscriptWithSlides.jsx';
 import StashedBlocksCard from '../components/StashedBlocksCard.jsx';
 import { fetchSlideImages } from '../lib/sermonSlideImages';
@@ -694,6 +695,9 @@ export default function SermonDetail() {
         setPreachings={setPreachedAt}
         userId={user?.id}
       />
+
+      {/* Upcoming worship — assign to a week in the Worship Planning app */}
+      <WorshipWeekCard sermon={sermon} />
 
       {/* Past versions (revision snapshots) */}
       <RevisionsCard
@@ -2260,7 +2264,7 @@ function DeleteSermonCard({ sermon }) {
           headCount('sermon_liturgy_links'),
           headCount('liturgy_items'),
           headCount('social_posts', 'source_sermon_id'),
-          headCount('worship_plans', 'upcoming_sermon_id'),
+          headCount('worship_plans', 'selected_sermon_id'),
         ]);
         if (cancelled) return;
         setCounts({
