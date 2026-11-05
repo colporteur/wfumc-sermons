@@ -26,6 +26,11 @@ export const ALLOWED_TABLES = [
   "voice_exemplars",
   "sermon_background_docs",
   "worship_plans", // read-only, for "what's next Sunday"
+  "ss_topics", // Sunday School app
+  "ss_lessons",
+  "ss_members", // display names only (who picked a question)
+  "ss_lesson_images", // captions only
+  "ss_topic_suggestions", // read-only
   "connector_changes",
   "mcp_clients",
   "mcp_tokens",

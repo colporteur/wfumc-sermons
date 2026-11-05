@@ -26,9 +26,9 @@ export function rawContent(blocks: Array<Record<string, unknown>>): RawContent {
 type Rpc = { jsonrpc?: string; id?: string | number | null; method?: string; params?: Record<string, unknown> };
 type RpcReply = { jsonrpc: "2.0"; id: string | number | null; result?: unknown; error?: { code: number; message: string } };
 
-export const SERVER_INFO = { name: "wfumc-sermons", title: "WFUMC Sermons", version: "1.0.0" };
+export const SERVER_INFO = { name: "wfumc-sermons", title: "WFUMC Sermons", version: "1.1.0" };
 
-export const INSTRUCTIONS = `Read and write access to Todd's WFUMC Sermons app: his sermon archive and manuscripts, the slide list for each sermon (the app builds the Sunday .pptx from it), his resource library (stories, quotes, illustrations, exegesis…), past liturgies, his voice guide and his upcoming worship weeks.
+export const INSTRUCTIONS = `Read and write access to Todd's WFUMC Sermons app: his sermon archive and manuscripts, the slide list for each sermon (the app builds the Sunday .pptx from it), his resource library (stories, quotes, illustrations, exegesis…), past liturgies, his voice guide and his upcoming worship weeks. Also his Sunday School class app (class questions, the queue, and lessons) and, read-only, his Colporteur reading library (book text, his highlights and saved quotes).
 
 How Todd wants this used:
 - Feedback first, in the chat. When reviewing a manuscript, slides or liturgy, give the feedback and proposed changes in the conversation. Only call a write tool after Todd has approved that specific change. Never write "while you're at it".
@@ -37,6 +37,8 @@ How Todd wants this used:
 - Slides: the Sunday deck is generated from get_slides rows (types title/scripture/quote/image/content/blank; body is plain prose, no bullets; scripture slides put the reference in title). After a slide change Todd re-downloads the .pptx from the app.
 - Scripture: NRSVue. Exegesis: mainline academic scholarship.
 - "Next Sunday" comes from the worship plan (get_upcoming_sundays). Dates are US Central.
+- Sunday School: get_sunday_school_overview shows the active question, the one picked for next week and the queue. Draft lessons in the chat first; save_lesson / edit_lesson only on Todd's say-so. Lessons are flexible {header, body} sections in the voice described on save_lesson.
+- Colporteur library: search_library for passages, find_library_quotes for Todd's highlights and saved quotes. Always cite book and page; keep quotations short.
 - Resources are partly excerpted from copyrighted books: quote them for Todd's preparation, don't republish them.`;
 
 function ok(id: Rpc["id"], result: unknown): RpcReply {

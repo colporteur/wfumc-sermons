@@ -247,6 +247,86 @@ assert.equal(replay.status, 400);
 const roAfter = await post("/api/mcp", { jsonrpc: "2.0", id: 0, method: "tools/list" }, { authorization: `Bearer ${ro.tok.access_token}` });
 assert.equal(roAfter.status, 401);
 log("replayed code refused and that connection revoked");
+
+// ── Sunday School ──
+const T_PAST = "e0000000-0000-4000-8000-000000000001", T_ACTIVE = "e0000000-0000-4000-8000-000000000002";
+const T_NEXT = "e0000000-0000-4000-8000-000000000003", T_Q1 = "e0000000-0000-4000-8000-000000000004";
+const ov = await c2("get_sunday_school_overview", {});
+assert.equal(ov.active[0].question, "What is heaven like?");
+assert.equal(ov.active[0].picked_by, "Tyler");
+assert.equal(ov.picked_for_next.length, 1, "other owner's topic hidden");
+assert.equal(ov.next_to_draft.topic_id, T_NEXT);
+assert.deepEqual(ov.queue.first.map((t) => t.topic_id), [T_Q1, "e0000000-0000-4000-8000-000000000005"]);
+assert.equal(ov.unprocessed_suggestions[0].from, "Martha");
+log("SS overview: active, next to draft, queue order, suggestions; other owner hidden");
+let gl = await c2("get_lesson", { topic_id: T_PAST });
+assert.deepEqual(gl.sections.map((x) => x.header), ["Opening Prompt", "Pastor's Notes", "Closing Prompt"]);
+const sl2 = await c2("search_lessons", { q: "thomas" });
+assert.equal(sl2.topics[0].topic_id, T_PAST);
+log("legacy lesson converted like the app; search_lessons");
+const nl = await c2("get_lesson", { topic_id: T_NEXT });
+assert.equal(nl.lesson_exists, false);
+const sv = await c2("save_lesson", { topic_id: T_NEXT, change_summary: "First draft", homework_text: "Read Job 1–2", homework_due: "2099-11-08",
+  sections: [{ header: "Opening Prompt", body: "Have you asked why?" }, { header: "A few thoughts", body: "- Job\n- Luke 13:1-5" }, { header: "Closing Prompt", body: "What are your thoughts?" }] });
+assert.equal(sv.created_question, false);
+assert.ok(sv.homework_hides_at.startsWith("2099-11-08T15:30"), sv.homework_hides_at);
+const raw = await pg`select sections, opening_prompt, pastor_notes, closing_prompt from ss_lessons where topic_id = ${T_NEXT}`;
+assert.equal(raw[0].opening_prompt, "Have you asked why?");
+assert.equal(raw[0].pastor_notes, "- Job\n- Luke 13:1-5");
+log("save_lesson new lesson; legacy columns mirrored like the app; homework hides 9:30 CT");
+const noHash = await c2("save_lesson", { topic_id: T_NEXT, change_summary: "x", sections: [{ header: "a", body: "b" }] });
+assert.ok(noHash.error.includes("expected_lesson_hash"));
+gl = await c2("get_lesson", { topic_id: T_NEXT });
+const el = await c2("edit_lesson", { topic_id: T_NEXT, expected_lesson_hash: gl.lesson_hash, change_summary: "Add Habakkuk", edits: [{ find: "- Luke 13:1-5", replace: "- Luke 13:1-5\n- Habakkuk 1" }] });
+gl = await c2("get_lesson", { topic_id: T_NEXT });
+assert.ok(gl.sections[1].body.endsWith("Habakkuk 1"));
+const elStale = await c2("edit_lesson", { topic_id: T_NEXT, expected_lesson_hash: sv.lesson_hash, change_summary: "x", edits: [{ find: "Job", replace: "Jobe" }] });
+assert.ok(elStale.error.includes("changed since"));
+const elCross = await c2("edit_lesson", { topic_id: T_NEXT, expected_lesson_hash: gl.lesson_hash, change_summary: "x", edits: [{ find: "Have you asked why?", replace: "x" }, { find: "nope", replace: "y" }] });
+assert.ok(elCross.error.includes("isn't in the manuscript"));
+log("edit_lesson: find/replace saved; stale hash and bad find refused");
+const nq = await c2("save_lesson", { new_question: "What is grace?", put_at_front_of_queue: true, change_summary: "New question + lesson",
+  sections: [{ header: "Opening Prompt", body: "Where have you seen grace?" }] });
+assert.equal(nq.created_question, true);
+const ov2 = await c2("get_sunday_school_overview", {});
+assert.equal(ov2.queue.first[0].question, "What is grace?");
+log("save_lesson with a new question puts it at the front of the queue");
+await c2("undo_change", { change_id: nq.change_id });
+const gone2 = await pg`select count(*)::int as n from ss_topics where text = 'What is grace?'`;
+assert.equal(gone2[0].n, 0);
+const blockedL = await c2("undo_change", { change_id: sv.change_id });
+assert.ok(blockedL.error.includes("force"));
+await c2("undo_change", { change_id: el.change_id });
+await c2("undo_change", { change_id: sv.change_id });
+const back = await c2("get_lesson", { topic_id: T_NEXT });
+assert.equal(back.lesson_exists, false);
+// edit an existing lesson and undo restores it exactly
+const before3 = await c2("get_lesson", { topic_id: T_ACTIVE });
+const e3 = await c2("edit_lesson", { topic_id: T_ACTIVE, expected_lesson_hash: before3.lesson_hash, change_summary: "x", edits: [{ find: "Picture heaven.", replace: "Picture heaven. What do you see?" }] });
+await c2("undo_change", { change_id: e3.change_id });
+const after3 = await c2("get_lesson", { topic_id: T_ACTIVE });
+assert.equal(after3.lesson_hash, before3.lesson_hash);
+const ch2 = await c2("list_recent_changes", { limit: 3 });
+assert.ok(ch2.some((x) => x.sunday_school_question === "What is heaven like?"));
+log("undo: new question+lesson removed, edits reverted, existing lesson restored exactly");
+
+// ── Colporteur library (read-only) ──
+const books = await c2("list_library_books", { scripture: "Matthew 25:1-13" });
+assert.equal(books.matched, 1);
+assert.equal(books.total, 1, "processing book hidden");
+const st = await c2("search_library", { q: "bridesmaids readiness" });
+assert.equal(st.results[0].location, "p. 137");
+assert.ok(st.results[0].link.endsWith("/read?page=137"));
+const fq = await c2("find_library_quotes", { scripture: "Matthew 25:5" });
+assert.deepEqual(fq.items.map((x) => x.type).sort(), ["highlight", "quote"]);
+assert.equal(fq.items.find((x) => x.type === "highlight").label, "Illustration");
+assert.equal(fq.items.find((x) => x.type === "highlight").note, "Use for Your Attention, Please!");
+const fq2 = await c2("find_library_quotes", { kind: ["exegesis"], q: "doubt" });
+assert.equal(fq2.matched, 1);
+const rp = await c2("read_library_passage", { book_id: "f0000000-0000-4000-8000-000000000001", page_or_chapter: 137, count: 2 });
+assert.equal(rp.sections.length, 2);
+log("library: books by scripture, full-text search with page links, highlights+notes+extracts, passages");
+
 const changes = await pg`select kind, summary, undone_at is not null as undone from connector_changes order by created_at`;
 console.log(changes.map((c) => `${c.undone ? "↺" : "•"} ${c.kind}: ${c.summary}`).join("\n"));
 await pg.end();

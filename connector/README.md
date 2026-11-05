@@ -1,8 +1,8 @@
 # WFUMC Sermons connector
 
-A private Claude connector (MCP server) for the WFUMC Sermons app, deployed
+A private Claude connector (MCP server) for the WFUMC Sermons and Sunday School apps (plus read-only search of the Colporteur library), deployed
 on Vercel from this folder. Claude reads sermons, manuscripts, slides,
-resources, liturgies and the voice guide, and — on connections approved with
+resources, liturgies, the voice guide and Sunday School lessons, searches the Colporteur library, and — on connections approved with
 "Allow changes" — writes changes Todd approves in chat. Every write saves the
 previous state first (`connector_changes`, plus Past Versions for
 manuscripts) and can be undone.

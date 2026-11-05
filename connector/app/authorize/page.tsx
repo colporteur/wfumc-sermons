@@ -106,15 +106,17 @@ export default async function AuthorizePage({ searchParams }: { searchParams: SP
         <li>sermons, manuscripts, past versions and preaching history</li>
         <li>slide lists, resources, liturgies and liturgy instructions</li>
         <li>your voice guide, background documents and upcoming worship weeks</li>
+        <li>Sunday School questions, the queue and lessons</li>
+        <li>your Colporteur library: book text, highlights and saved quotes (read only)</li>
       </ul>
       <p style={{ fontSize: 14, color: "#6b6156" }}>
-        Pastoral records, bulletins and everything else in the shared database are not reachable. The approval goes back to <code>{host}</code>.
+        Pastoral records, attendance, bulletins and everything else in the shared database are not reachable. The approval goes back to <code>{host}</code>.
       </p>
       <form action={allow} style={{ display: "grid", gap: 14, marginTop: 20 }}>
         <label style={{ display: "flex", gap: 10, alignItems: "flex-start", fontSize: 15 }}>
           <input type="checkbox" name="write" defaultChecked style={{ marginTop: 5 }} />
           <span>
-            <strong>Allow changes</strong> you approve in chat: manuscripts, slides, sermon details, resources and liturgies. Every change saves
+            <strong>Allow changes</strong> you approve in chat: manuscripts, slides, sermon details, resources, liturgies and Sunday School lessons. Every change saves
             the previous version first and can be undone. Nothing is ever permanently deleted except things Claude itself added.
           </span>
         </label>

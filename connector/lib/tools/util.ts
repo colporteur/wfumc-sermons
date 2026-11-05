@@ -196,6 +196,7 @@ export type ChangeKind =
   | "liturgy_create"
   | "liturgy_sections"
   | "liturgy_link"
+  | "lesson"
   | "undo";
 
 export type Ctx = { who: string; write: boolean };

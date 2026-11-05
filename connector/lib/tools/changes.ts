@@ -5,6 +5,7 @@ import type { ToolDef } from "../protocol";
 import { manuscriptHash, snapshotRevision } from "./sermons";
 import { loadSlides, restoreSlides, slidesHash } from "./slides";
 import { restoreSections } from "./liturgies";
+import { undoLesson } from "./lessons";
 import { type Ctx, bool, iso, logChange, num, requireWrite, uuid } from "./util";
 
 type Row = Record<string, any>;
@@ -16,7 +17,8 @@ async function listChanges(a: Record<string, unknown>) {
   const limit = num(a, "limit", 20, 1, 100)!;
   const s = sql();
   const rows = await s`
-    SELECT c.id, c.kind, c.tool, c.summary, c.created_at, c.undone_at, c.sermon_id, c.target_id, s.title AS sermon_title
+    SELECT c.id, c.kind, c.tool, c.summary, c.created_at, c.undone_at, c.sermon_id, c.target_id, s.title AS sermon_title,
+           CASE WHEN c.kind = 'lesson' THEN (SELECT text FROM ss_topics WHERE id = c.target_id) END AS lesson_question
     FROM connector_changes c LEFT JOIN sermons s ON s.id = c.sermon_id
     WHERE c.owner_user_id = ${owner()} ${sermonId ? s`AND c.sermon_id = ${sermonId}` : s``}
     ORDER BY c.created_at DESC LIMIT ${limit}`;
@@ -26,6 +28,7 @@ async function listChanges(a: Record<string, unknown>) {
     what: r.summary,
     kind: r.kind,
     sermon: r.sermon_title ?? undefined,
+    sunday_school_question: r.lesson_question ?? undefined,
     undone: r.undone_at ? iso(r.undone_at) : undefined,
     can_undo: !r.undone_at && r.kind !== "undo",
   }));
@@ -100,6 +103,10 @@ async function undo(a: Record<string, unknown>, ctx: Ctx) {
         what = "Removed the liturgy link";
         break;
       }
+      case "lesson": {
+        what = await undoLesson(t, c.target_id, before, after?.lesson_hash as string | undefined, force);
+        break;
+      }
       default:
         throw new Error(`Don't know how to undo a ${c.kind} change`);
     }
@@ -114,7 +121,7 @@ export function changeTools(ctx: Ctx): ToolDef[] {
     {
       name: "list_recent_changes",
       title: "Recent changes by Claude",
-      description: "What this connector has changed in the Sermons app, newest first, with change ids for undo_change.",
+      description: "What this connector has changed in the Sermons and Sunday School apps, newest first, with change ids for undo_change.",
       inputSchema: { type: "object", properties: { sermon_id: { type: "string" }, limit: { type: "integer", default: 20 } } },
       run: listChanges,
     },
@@ -122,7 +129,7 @@ export function changeTools(ctx: Ctx): ToolDef[] {
       name: "undo_change",
       title: "Undo a change",
       description:
-        "Put back what a connector change replaced (manuscript text, slides, liturgy elements, resource fields) or remove what it added. Refuses if the item was edited again since, unless force is true (manuscripts are saved to Past Versions first regardless). Only when Todd asks.",
+        "Put back what a connector change replaced (manuscript text, slides, liturgy elements, resource fields, Sunday School lessons) or remove what it added. Refuses if the item was edited again since, unless force is true (manuscripts are saved to Past Versions first regardless). Only when Todd asks.",
       readOnly: false,
       destructive: true,
       inputSchema: { type: "object", required: ["change_id"], properties: { change_id: { type: "string" }, force: { type: "boolean", default: false } } },

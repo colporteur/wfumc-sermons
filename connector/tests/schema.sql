@@ -65,3 +65,22 @@ create table worship_plans (id uuid primary key default gen_random_uuid(), servi
   sermon_topic text, notes text, selected_sermon_id uuid references sermons(id) on delete set null, sermon_from_scratch boolean not null default false,
   text_source text, lectionary_year text, lectionary_designation text, liturgical_season text, selected_text_option_id uuid,
   created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+
+-- Sunday School (0063–0065)
+create table ss_members (id uuid primary key default gen_random_uuid(), owner_user_id uuid not null references auth.users(id), display_name text not null,
+  sort_key text not null, active boolean not null default true, notes text, created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table ss_topics (id uuid primary key default gen_random_uuid(), owner_user_id uuid not null references auth.users(id), text text not null,
+  status text not null default 'possible_future' check (status in ('possible_future','picked_for_next','active','past')),
+  picked_by_member_id uuid references ss_members(id) on delete set null, discussed_on date,
+  queue_sort double precision not null default extract(epoch from now()), submitted_by_name text, notes text,
+  created_at timestamptz not null default now(), updated_at timestamptz not null default now());
+create table ss_lessons (id uuid primary key default gen_random_uuid(), owner_user_id uuid not null references auth.users(id),
+  topic_id uuid not null references ss_topics(id) on delete cascade, opening_prompt text, pastor_notes text default '',
+  closing_prompt text default 'What are your thoughts?', homework_text text, homework_expires_at timestamptz, imported_from text, import_source_type text,
+  sections jsonb not null default '[]'::jsonb, created_at timestamptz not null default now(), updated_at timestamptz not null default now(), unique (topic_id));
+create trigger ss_lessons_updated_at before update on ss_lessons for each row execute function set_updated_at();
+create table ss_topic_suggestions (id uuid primary key default gen_random_uuid(), owner_user_id uuid not null, text text not null, submitter_name text not null,
+  processed boolean not null default false, created_topic_id uuid, created_at timestamptz not null default now());
+create table ss_lesson_images (id uuid primary key default gen_random_uuid(), owner_user_id uuid not null, lesson_id uuid not null references ss_lessons(id) on delete cascade,
+  storage_path text not null, original_name text, caption text, sort_order int not null default 0, include_in_print boolean not null default true,
+  include_in_claude boolean not null default true, created_at timestamptz not null default now());
